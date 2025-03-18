@@ -1,3 +1,5 @@
+#illumio/utils.py
+#Fichier utilitaire pour la gestion de la configuration.
 import os
 import configparser
 from .exceptions import ConfigurationError

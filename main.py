@@ -1,3 +1,4 @@
+#main.py
 import sys
 from illumio import IllumioAPI, ConfigurationError
 

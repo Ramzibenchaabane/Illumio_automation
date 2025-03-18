@@ -1,3 +1,5 @@
+#illumio/exceptions.py
+#Exceptions personnalisées pour les erreurs d'API Illumio.
 class IllumioAPIError(Exception):
     """Exception de base pour les erreurs d'API Illumio."""
     pass

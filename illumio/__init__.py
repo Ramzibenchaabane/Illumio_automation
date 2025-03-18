@@ -1,3 +1,4 @@
+#illumio/__init__.py
 from .api import IllumioAPI
 from .exceptions import IllumioAPIError, AuthenticationError, ConfigurationError, APIRequestError
 from .exceptions import (

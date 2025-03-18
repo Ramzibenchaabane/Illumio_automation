@@ -1,3 +1,5 @@
+#illumio/async_operations.py
+#!/usr/bin/env python3
 """
 Module de gestion des opérations asynchrones pour l'API Illumio.
 Centralise la logique de soumission, surveillance et récupération des résultats des opérations asynchrones.
