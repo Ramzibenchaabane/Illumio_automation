@@ -72,6 +72,62 @@ class IllumioAPI:
         except requests.exceptions.RequestException as e:
             raise APIRequestError(0, str(e))
     
+    def _make_paginated_request(self, method, endpoint, data=None, params=None):
+        """Méthode pour faire des requêtes paginées à l'API et récupérer tous les résultats."""
+        if params is None:
+            params = {}
+        
+        # Initialiser la liste des résultats
+        all_results = []
+        
+        # Paramètres de pagination
+        if 'limit' not in params:
+            params['limit'] = 1000  # Nombre maximum d'éléments par page
+        
+        # Première requête sans offset
+        response = self._make_request(method, endpoint, data, params)
+        
+        # Si la réponse n'est pas une liste, la retourner telle quelle
+        if not isinstance(response, list):
+            return response
+        
+        # Ajouter les résultats de la première page
+        all_results.extend(response)
+        
+        # Si la réponse est vide ou contient moins d'éléments que la limite, on a terminé
+        if not response or len(response) < params['limit']:
+            return all_results
+        
+        # Récupérer les pages suivantes avec pagination
+        current_offset = params['limit']
+        
+        while True:
+            # Mettre à jour l'offset pour la prochaine page
+            params_with_offset = params.copy()
+            params_with_offset['offset'] = current_offset
+            
+            # Faire la requête pour la page suivante
+            next_page = self._make_request(method, endpoint, data, params_with_offset)
+            
+            # Si la page est vide, on a terminé
+            if not next_page:
+                break
+            
+            # Ajouter les résultats de la page
+            all_results.extend(next_page)
+            
+            # Si la page contient moins d'éléments que la limite, on a terminé
+            if len(next_page) < params['limit']:
+                break
+            
+            # Mettre à jour l'offset pour la prochaine page
+            current_offset += params['limit']
+            
+            # Optionnel: afficher une indication de progression
+            print(f"  Récupération en cours... ({len(all_results)} éléments)")
+        
+        return all_results
+    
     def test_connection(self):
         """Teste la connexion au PCE Illumio."""
         try:
@@ -85,19 +141,19 @@ class IllumioAPI:
             return False, f"Exception: {str(e)}"
     
     def get_workloads(self, params=None):
-        """Récupère la liste des workloads avec filtres optionnels."""
-        return self._make_request('get', 'workloads', params=params)
+        """Récupère la liste complète des workloads avec filtres optionnels."""
+        return self._make_paginated_request('get', 'workloads', params=params)
     
     def get_workload(self, workload_id):
         """Récupère les détails d'un workload spécifique."""
         return self._make_request('get', f'workloads/{workload_id}')
     
     def get_labels(self):
-        """Récupère la liste des labels."""
-        return self._make_request('get', 'labels')
+        """Récupère la liste complète des labels."""
+        return self._make_paginated_request('get', 'labels')
     
     def get_ip_lists(self, pversion='draft', params=None):
-        """Récupère la liste des IP lists.
+        """Récupère la liste complète des IP lists.
         
         Args:
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
@@ -108,10 +164,10 @@ class IllumioAPI:
         
         # IMPORTANT: pversion est inclus dans le chemin, pas en tant que paramètre de requête
         endpoint = f"sec_policy/{pversion}/ip_lists"
-        return self._make_request('get', endpoint, params=params)
+        return self._make_paginated_request('get', endpoint, params=params)
     
     def get_services(self, pversion='draft', params=None):
-        """Récupère la liste des services.
+        """Récupère la liste complète des services.
         
         Args:
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
@@ -122,10 +178,10 @@ class IllumioAPI:
         
         # IMPORTANT: pversion est inclus dans le chemin, pas en tant que paramètre de requête
         endpoint = f"sec_policy/{pversion}/services"
-        return self._make_request('get', endpoint, params=params)
+        return self._make_paginated_request('get', endpoint, params=params)
     
     def get_label_groups(self, pversion='draft', params=None):
-        """Récupère la liste des groupes de labels.
+        """Récupère la liste complète des groupes de labels.
         
         Args:
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
@@ -136,7 +192,7 @@ class IllumioAPI:
         
         # IMPORTANT: pversion est inclus dans le chemin, pas en tant que paramètre de requête
         endpoint = f"sec_policy/{pversion}/label_groups"
-        return self._make_request('get', endpoint, params=params)
+        return self._make_paginated_request('get', endpoint, params=params)
     
     def get_label_dimensions(self):
         """Récupère les dimensions de labels disponibles."""
@@ -144,7 +200,7 @@ class IllumioAPI:
     
     def get_traffic_flows(self, params=None):
         """Récupère les flux de trafic avec filtres optionnels."""
-        return self._make_request('get', 'traffic_flows', params=params)
+        return self._make_paginated_request('get', 'traffic_flows', params=params)
     
     # Méthodes d'API pour les opérations asynchrones d'analyse de trafic
     
@@ -158,4 +214,4 @@ class IllumioAPI:
     
     def get_async_traffic_query_results(self, query_id):
         """Récupère les résultats d'une requête asynchrone de trafic."""
-        return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
+        return self._make_paginated_request('get', f'traffic_flows/async_queries/{query_id}/download')

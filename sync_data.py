@@ -39,6 +39,7 @@ def sync_all_data():
         
         # Synchroniser les workloads
         print("\nRécupération des workloads...")
+        print("  Cette opération peut prendre du temps pour les grands environnements...")
         workloads = api.get_workloads()
         if workloads:
             print(f"✅ {len(workloads)} workloads récupérés.")
