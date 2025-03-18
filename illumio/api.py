@@ -1,6 +1,7 @@
 import requests
+import time
 from urllib3.exceptions import InsecureRequestWarning
-from .exceptions import APIRequestError, AuthenticationError
+from .exceptions import APIRequestError, AuthenticationError, TimeoutError
 from .utils import load_config
 
 # Désactiver les avertissements pour les certificats auto-signés
@@ -40,6 +41,10 @@ class IllumioAPI:
         """Méthode générique pour faire des requêtes à l'API."""
         url = f"{self.base_url}/api/v2/orgs/{self.org_id}/{endpoint}"
         
+        # Initialiser params s'il est None
+        if params is None:
+            params = {}
+            
         try:
             if method.lower() == 'get':
                 response = self.session.get(url, params=params)
@@ -92,35 +97,86 @@ class IllumioAPI:
         """Récupère la liste des labels."""
         return self._make_request('get', 'labels')
     
-    def get_ip_lists(self):
-        """Récupère la liste des IP lists."""
-        return self._make_request('get', 'sec_policy/ip_lists')
-    # Ajouter ces méthodes à la classe IllumioAPI
-
-def get_services(self):
-    """Récupère la liste des services."""
-    return self._make_request('get', 'sec_policy/services')
-
-def get_label_groups(self):
-    """Récupère la liste des groupes de labels."""
-    return self._make_request('get', 'sec_policy/label_groups')
-
-def get_label_dimensions(self):
-    """Récupère les dimensions de labels disponibles."""
-    return self._make_request('get', 'label_dimensions')
-
-def get_traffic_flows(self, params=None):
-    """Récupère les flux de trafic avec filtres optionnels."""
-    return self._make_request('get', 'traffic_flows', params=params)
-
-def create_async_traffic_query(self, query_data):
-    """Crée une requête asynchrone pour analyser les flux de trafic."""
-    return self._make_request('post', 'traffic_flows/async_queries', data=query_data)
-
-def get_async_traffic_query_status(self, query_id):
-    """Récupère le statut d'une requête asynchrone de trafic."""
-    return self._make_request('get', f'traffic_flows/async_queries/{query_id}')
-
-def get_async_traffic_query_results(self, query_id):
-    """Récupère les résultats d'une requête asynchrone de trafic."""
-    return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
+    def get_ip_lists(self, pversion='draft'):
+        """Récupère la liste des IP lists.
+        
+        Args:
+            pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
+        """
+        return self._make_request('get', 'sec_policy/ip_lists', params={'pversion': pversion})
+    
+    def get_services(self, pversion='draft'):
+        """Récupère la liste des services.
+        
+        Args:
+            pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
+        """
+        return self._make_request('get', 'sec_policy/services', params={'pversion': pversion})
+    
+    def get_label_groups(self, pversion='draft'):
+        """Récupère la liste des groupes de labels.
+        
+        Args:
+            pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
+        """
+        return self._make_request('get', 'sec_policy/label_groups', params={'pversion': pversion})
+    
+    def get_label_dimensions(self):
+        """Récupère les dimensions de labels disponibles."""
+        return self._make_request('get', 'label_dimensions')
+    
+    def get_traffic_flows(self, params=None):
+        """Récupère les flux de trafic avec filtres optionnels."""
+        return self._make_request('get', 'traffic_flows', params=params)
+    
+    def create_async_traffic_query(self, query_data):
+        """Crée une requête asynchrone pour analyser les flux de trafic."""
+        return self._make_request('post', 'traffic_flows/async_queries', data=query_data)
+    
+    def get_async_traffic_query_status(self, query_id):
+        """Récupère le statut d'une requête asynchrone de trafic."""
+        return self._make_request('get', f'traffic_flows/async_queries/{query_id}')
+    
+    def get_async_traffic_query_results(self, query_id):
+        """Récupère les résultats d'une requête asynchrone de trafic."""
+        return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
+    
+    def execute_traffic_analysis(self, query_data, polling_interval=5, max_attempts=60):
+        """
+        Exécute une analyse de trafic asynchrone complète.
+        
+        Args:
+            query_data (dict): Données de la requête à soumettre
+            polling_interval (int): Intervalle en secondes entre les vérifications du statut
+            max_attempts (int): Nombre maximal de tentatives de vérification
+            
+        Returns:
+            dict: Résultats de l'analyse de trafic
+            
+        Raises:
+            TimeoutError: Si la requête n'est pas complétée dans le délai imparti
+        """
+        # Soumettre la requête
+        query_response = self.create_async_traffic_query(query_data)
+        query_id = query_response.get('id')
+        
+        if not query_id:
+            raise APIRequestError(0, "Impossible d'obtenir l'ID de la requête asynchrone")
+        
+        # Vérifier périodiquement le statut
+        attempts = 0
+        while attempts < max_attempts:
+            status_response = self.get_async_traffic_query_status(query_id)
+            status = status_response.get('status')
+            
+            if status == 'completed':
+                # Récupérer les résultats
+                return self.get_async_traffic_query_results(query_id)
+            
+            elif status == 'failed':
+                raise APIRequestError(0, f"La requête asynchrone a échoué: {status_response.get('error_message', 'Raison inconnue')}")
+            
+            time.sleep(polling_interval)
+            attempts += 1
+        
+        raise TimeoutError(f"La requête asynchrone n'a pas été complétée après {max_attempts * polling_interval} secondes")

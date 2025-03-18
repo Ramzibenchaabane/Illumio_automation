@@ -16,3 +16,7 @@ class APIRequestError(IllumioAPIError):
         self.status_code = status_code
         self.message = message
         super().__init__(f"API Error {status_code}: {message}")
+
+class TimeoutError(IllumioAPIError):
+    """Erreur de délai d'attente dépassé pour une opération."""
+    pass

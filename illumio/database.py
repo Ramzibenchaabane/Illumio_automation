@@ -153,6 +153,42 @@ class IllumioDatabase:
             )
             ''')
             
+            # Tables pour les requêtes de trafic asynchrones
+            self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS traffic_queries (
+                id TEXT PRIMARY KEY,
+                query_name TEXT,
+                status TEXT,
+                created_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                raw_query TEXT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS traffic_flows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_id TEXT,
+                src_ip TEXT,
+                src_workload_id TEXT,
+                dst_ip TEXT,
+                dst_workload_id TEXT,
+                service TEXT,
+                port INTEGER,
+                protocol INTEGER,
+                policy_decision TEXT,
+                first_detected TIMESTAMP,
+                last_detected TIMESTAMP,
+                num_connections INTEGER,
+                flow_direction TEXT,
+                raw_data TEXT,
+                FOREIGN KEY (query_id) REFERENCES traffic_queries (id),
+                FOREIGN KEY (src_workload_id) REFERENCES workloads (id),
+                FOREIGN KEY (dst_workload_id) REFERENCES workloads (id)
+            )
+            ''')
+            
             self.conn.commit()
             return True
         
@@ -409,5 +445,152 @@ class IllumioDatabase:
             self.conn.rollback()
             return False
         
+        finally:
+            self.close()
+    
+    def store_traffic_query(self, query_data, query_id, status='created'):
+        """Stocke une requête de trafic asynchrone dans la base de données."""
+        try:
+            self.connect()
+            
+            self.cursor.execute('''
+            INSERT OR REPLACE INTO traffic_queries 
+            (id, query_name, status, created_at, raw_query)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
+            ''', (
+                query_id,
+                query_data.get('query_name'),
+                status,
+                json.dumps(query_data)
+            ))
+            
+            self.conn.commit()
+            return True
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors du stockage de la requête de trafic: {e}")
+            self.conn.rollback()
+            return False
+            
+        finally:
+            self.close()
+    
+    def update_traffic_query_status(self, query_id, status):
+        """Met à jour le statut d'une requête de trafic asynchrone."""
+        try:
+            self.connect()
+            
+            self.cursor.execute('''
+            UPDATE traffic_queries
+            SET status = ?, 
+                completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
+            WHERE id = ?
+            ''', (status, status, query_id))
+            
+            self.conn.commit()
+            return True
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la mise à jour du statut de la requête: {e}")
+            self.conn.rollback()
+            return False
+            
+        finally:
+            self.close()
+    
+    def store_traffic_flows(self, query_id, flows):
+        """Stocke les résultats d'une requête de trafic asynchrone."""
+        try:
+            self.connect()
+            
+            # Supprimer les flux existants pour cette requête
+            self.cursor.execute("DELETE FROM traffic_flows WHERE query_id = ?", (query_id,))
+            
+            for flow in flows:
+                # Extraire les informations source et destination
+                src = flow.get('src', {})
+                dst = flow.get('dst', {})
+                service = flow.get('service', {})
+                timestamp_range = flow.get('timestamp_range', {})
+                
+                # Extraire les IDs des workloads s'ils existent
+                src_workload_id = src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None
+                dst_workload_id = dst.get('workload', {}).get('href', '').split('/')[-1] if dst.get('workload', {}).get('href') else None
+                
+                self.cursor.execute('''
+                INSERT INTO traffic_flows 
+                (query_id, src_ip, src_workload_id, dst_ip, dst_workload_id, 
+                service, port, protocol, policy_decision, first_detected, 
+                last_detected, num_connections, flow_direction, raw_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    query_id,
+                    src.get('ip'),
+                    src_workload_id,
+                    dst.get('ip'),
+                    dst_workload_id,
+                    service.get('name'),
+                    service.get('port'),
+                    service.get('proto'),
+                    flow.get('policy_decision'),
+                    timestamp_range.get('first_detected'),
+                    timestamp_range.get('last_detected'),
+                    flow.get('num_connections'),
+                    flow.get('flow_direction'),
+                    json.dumps(flow)
+                ))
+            
+            # Mettre à jour le statut de la requête
+            self.update_traffic_query_status(query_id, 'completed')
+            
+            self.conn.commit()
+            return True
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors du stockage des flux de trafic: {e}")
+            self.conn.rollback()
+            return False
+            
+        finally:
+            self.close()
+    
+    def get_traffic_queries(self, status=None):
+        """Récupère les requêtes de trafic asynchrones avec filtre optionnel sur le statut."""
+        try:
+            self.connect()
+            
+            if status:
+                self.cursor.execute('''
+                SELECT * FROM traffic_queries WHERE status = ? ORDER BY created_at DESC
+                ''', (status,))
+            else:
+                self.cursor.execute('''
+                SELECT * FROM traffic_queries ORDER BY created_at DESC
+                ''')
+            
+            return [dict(row) for row in self.cursor.fetchall()]
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la récupération des requêtes de trafic: {e}")
+            return []
+            
+        finally:
+            self.close()
+    
+    def get_traffic_flows(self, query_id):
+        """Récupère les flux de trafic pour une requête spécifique."""
+        try:
+            self.connect()
+            
+            self.cursor.execute('''
+            SELECT * FROM traffic_flows WHERE query_id = ?
+            ''', (query_id,))
+            
+            return [dict(row) for row in self.cursor.fetchall()]
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la récupération des flux de trafic: {e}")
+            return []
+            
         finally:
             self.close()

@@ -51,7 +51,7 @@ def sync_all_data():
         
         # Synchroniser les IP Lists
         print("\nRécupération des listes d'IPs...")
-        ip_lists = api.get_ip_lists()
+        ip_lists = api.get_ip_lists(pversion='draft')  # Spécifier explicitement pversion
         if ip_lists:
             print(f"✅ {len(ip_lists)} listes d'IPs récupérées.")
             if db.store_ip_lists(ip_lists):
@@ -63,7 +63,7 @@ def sync_all_data():
         
         # Synchroniser les services
         print("\nRécupération des services...")
-        services = api.get_services()
+        services = api.get_services(pversion='draft')  # Spécifier explicitement pversion
         if services:
             print(f"✅ {len(services)} services récupérés.")
             if db.store_services(services):
@@ -75,7 +75,7 @@ def sync_all_data():
         
         # Synchroniser les groupes de labels
         print("\nRécupération des groupes de labels...")
-        label_groups = api.get_label_groups()
+        label_groups = api.get_label_groups(pversion='draft')  # Spécifier explicitement pversion
         if label_groups:
             print(f"✅ {len(label_groups)} groupes de labels récupérés.")
             if db.store_label_groups(label_groups):
