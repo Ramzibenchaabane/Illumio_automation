@@ -14,8 +14,11 @@ class IllumioAPI:
         self.config = load_config(config_file)
         self.base_url = self.config.get('illumio', 'base_url')
         self.org_id = self.config.get('illumio', 'org_id')
+        
+        # Gérer la valeur booléenne manuellement
+        verify_ssl = self.config.get('illumio', 'verify_ssl')
         self.session = requests.Session()
-        self.session.verify = self.config.getboolean('illumio', 'verify_ssl', fallback=False)
+        self.session.verify = verify_ssl.lower() == 'true'
         
         # Headers par défaut
         self.session.headers.update({
@@ -24,12 +27,12 @@ class IllumioAPI:
         })
         
         # Token CSRF à récupérer manuellement du navigateur
-        self.csrf_token = self.config.get('illumio', 'csrf_token', fallback=None)
+        self.csrf_token = self.config.get('illumio', 'csrf_token', fallback='')
         if self.csrf_token:
             self.session.headers.update({'X-CSRF-Token': self.csrf_token})
         
         # Cookie de session à récupérer manuellement du navigateur
-        self.session_cookie = self.config.get('illumio', 'session_cookie', fallback=None)
+        self.session_cookie = self.config.get('illumio', 'session_cookie', fallback='')
         if self.session_cookie:
             self.session.cookies.update({'JSESSIONID': self.session_cookie})
     
