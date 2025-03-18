@@ -1,10 +1,10 @@
-from .api import IllumioAPI
-from .exceptions import IllumioAPIError, AuthenticationError, ConfigurationError, APIRequestError
+from .database import IllumioDatabase
 
 __all__ = [
     'IllumioAPI',
     'IllumioAPIError',
     'AuthenticationError',
     'ConfigurationError',
-    'APIRequestError'
+    'APIRequestError',
+    'IllumioDatabase'
 ]

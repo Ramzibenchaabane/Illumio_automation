@@ -95,3 +95,32 @@ class IllumioAPI:
     def get_ip_lists(self):
         """Récupère la liste des IP lists."""
         return self._make_request('get', 'sec_policy/ip_lists')
+    # Ajouter ces méthodes à la classe IllumioAPI
+
+def get_services(self):
+    """Récupère la liste des services."""
+    return self._make_request('get', 'sec_policy/services')
+
+def get_label_groups(self):
+    """Récupère la liste des groupes de labels."""
+    return self._make_request('get', 'sec_policy/label_groups')
+
+def get_label_dimensions(self):
+    """Récupère les dimensions de labels disponibles."""
+    return self._make_request('get', 'label_dimensions')
+
+def get_traffic_flows(self, params=None):
+    """Récupère les flux de trafic avec filtres optionnels."""
+    return self._make_request('get', 'traffic_flows', params=params)
+
+def create_async_traffic_query(self, query_data):
+    """Crée une requête asynchrone pour analyser les flux de trafic."""
+    return self._make_request('post', 'traffic_flows/async_queries', data=query_data)
+
+def get_async_traffic_query_status(self, query_id):
+    """Récupère le statut d'une requête asynchrone de trafic."""
+    return self._make_request('get', f'traffic_flows/async_queries/{query_id}')
+
+def get_async_traffic_query_results(self, query_id):
+    """Récupère les résultats d'une requête asynchrone de trafic."""
+    return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
