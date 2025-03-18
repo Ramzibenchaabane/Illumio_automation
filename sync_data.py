@@ -26,7 +26,7 @@ def sync_all_data():
         print(f"✅ {message}")
         
         # Synchroniser les labels
-        print("\nRécupération des labels...")
+        print("\nRécupération des labels (mode asynchrone)...")
         labels = api.get_labels()
         if labels:
             print(f"✅ {len(labels)} labels récupérés.")
@@ -38,8 +38,7 @@ def sync_all_data():
             print("❌ Échec de la récupération des labels.")
         
         # Synchroniser les workloads
-        print("\nRécupération des workloads...")
-        print("  Cette opération peut prendre du temps pour les grands environnements...")
+        print("\nRécupération des workloads (mode asynchrone)...")
         workloads = api.get_workloads()
         if workloads:
             print(f"✅ {len(workloads)} workloads récupérés.")
@@ -51,7 +50,7 @@ def sync_all_data():
             print("❌ Échec de la récupération des workloads.")
         
         # Synchroniser les IP Lists
-        print("\nRécupération des listes d'IPs...")
+        print("\nRécupération des listes d'IPs (mode asynchrone)...")
         ip_lists = api.get_ip_lists()  # Le pversion est maintenant dans le chemin de l'endpoint
         if ip_lists:
             print(f"✅ {len(ip_lists)} listes d'IPs récupérées.")
@@ -63,7 +62,7 @@ def sync_all_data():
             print("❌ Échec de la récupération des listes d'IPs.")
         
         # Synchroniser les services
-        print("\nRécupération des services...")
+        print("\nRécupération des services (mode asynchrone)...")
         services = api.get_services()  # Le pversion est maintenant dans le chemin de l'endpoint
         if services:
             print(f"✅ {len(services)} services récupérés.")
@@ -75,7 +74,7 @@ def sync_all_data():
             print("❌ Échec de la récupération des services.")
         
         # Synchroniser les groupes de labels
-        print("\nRécupération des groupes de labels...")
+        print("\nRécupération des groupes de labels (mode asynchrone)...")
         label_groups = api.get_label_groups()  # Le pversion est maintenant dans le chemin de l'endpoint
         if label_groups:
             print(f"✅ {len(label_groups)} groupes de labels récupérés.")
