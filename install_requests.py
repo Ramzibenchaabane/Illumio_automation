@@ -71,6 +71,4 @@ def main():
         print("Nettoyage terminé.")
 
 if __name__ == "__main__":
-    # Forcer Python à utiliser IPv4 si nécessaire
-    socket.setdefaultfamily(socket.AF_INET)
     main()
