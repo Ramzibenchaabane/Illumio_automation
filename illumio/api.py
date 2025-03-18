@@ -73,18 +73,19 @@ class IllumioAPI:
             raise APIRequestError(0, str(e))
     
     def _make_paginated_request(self, method, endpoint, data=None, params=None):
-        """Méthode pour faire des requêtes paginées à l'API et récupérer tous les résultats."""
+        """Méthode pour faire des requêtes paginées à l'API et récupérer absolument TOUS les résultats."""
         if params is None:
             params = {}
         
         # Initialiser la liste des résultats
         all_results = []
         
-        # Paramètres de pagination
+        # Paramètres de pagination - utiliser la limite maximale supportée par l'API Illumio (500)
         if 'limit' not in params:
-            params['limit'] = 1000  # Nombre maximum d'éléments par page
+            params['limit'] = 500
         
         # Première requête sans offset
+        print(f"  Récupération de la page 1 (limite: {params['limit']})...")
         response = self._make_request(method, endpoint, data, params)
         
         # Si la réponse n'est pas une liste, la retourner telle quelle
@@ -93,6 +94,7 @@ class IllumioAPI:
         
         # Ajouter les résultats de la première page
         all_results.extend(response)
+        print(f"  Éléments récupérés: {len(all_results)}")
         
         # Si la réponse est vide ou contient moins d'éléments que la limite, on a terminé
         if not response or len(response) < params['limit']:
@@ -100,32 +102,40 @@ class IllumioAPI:
         
         # Récupérer les pages suivantes avec pagination
         current_offset = params['limit']
+        page = 2
         
+        # Continuer à récupérer des pages tant qu'il y a des résultats
         while True:
             # Mettre à jour l'offset pour la prochaine page
             params_with_offset = params.copy()
             params_with_offset['offset'] = current_offset
             
+            # Afficher la progression
+            print(f"  Récupération de la page {page} (offset: {current_offset}, limite: {params['limit']})...")
+            
             # Faire la requête pour la page suivante
             next_page = self._make_request(method, endpoint, data, params_with_offset)
             
             # Si la page est vide, on a terminé
-            if not next_page:
+            if not next_page or len(next_page) == 0:
                 break
             
             # Ajouter les résultats de la page
             all_results.extend(next_page)
+            print(f"  Total d'éléments récupérés: {len(all_results)}")
             
             # Si la page contient moins d'éléments que la limite, on a terminé
             if len(next_page) < params['limit']:
                 break
             
             # Mettre à jour l'offset pour la prochaine page
-            current_offset += params['limit']
+            current_offset += len(next_page)
+            page += 1
             
-            # Optionnel: afficher une indication de progression
-            print(f"  Récupération en cours... ({len(all_results)} éléments)")
+            # Pause courte pour éviter de surcharger l'API
+            time.sleep(0.5)
         
+        print(f"  Récupération terminée: {len(all_results)} éléments au total")
         return all_results
     
     def test_connection(self):
