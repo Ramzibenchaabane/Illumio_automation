@@ -3,14 +3,22 @@ import tarfile
 import urllib.request
 import shutil
 import sys
+import socket
 
-# URL de téléchargement de la bibliothèque Requests (version stable)
-REQUESTS_URL = "https://files.pythonhosted.org/packages/source/r/requests/requests-2.31.0.tar.gz"
+# Adresse IP directe de files.pythonhosted.org (à vérifier si elle est correcte dans votre environnement)
+FILES_HOST = "151.101.192.223"
+REQUESTS_URL = f"http://{FILES_HOST}/packages/source/r/requests/requests-2.31.0.tar.gz"
+REQUESTS_HOST_HEADER = "files.pythonhosted.org"
 
 def download_requests(destination: str):
-    """Télécharge l'archive de requests."""
+    """Télécharge l'archive de requests en utilisant l'adresse IP et l'en-tête Host."""
     print(f"Téléchargement de requests depuis {REQUESTS_URL}...")
-    urllib.request.urlretrieve(REQUESTS_URL, destination)
+    request = urllib.request.Request(
+        url=REQUESTS_URL,
+        headers={"Host": REQUESTS_HOST_HEADER}  # Ajout de l'en-tête Host pour le domaine
+    )
+    with urllib.request.urlopen(request) as response, open(destination, "wb") as out_file:
+        shutil.copyfileobj(response, out_file)
     print(f"Fichier téléchargé : {destination}")
 
 def extract_tar_gz(archive_path: str, extract_to: str):
@@ -31,7 +39,7 @@ def install_to_venv(venv_path: str, source_path: str):
     # Installer requests avec setup.py
     print(f"Installation de requests dans le venv ({venv_path})...")
     setup_path = os.path.join(source_path, "setup.py")
-    os.system(f"{python_executable} {setup_path} install")
+    os.system(f'"{python_executable}" "{setup_path}" install')
     print("Installation terminée.")
 
 def main():
@@ -63,4 +71,6 @@ def main():
         print("Nettoyage terminé.")
 
 if __name__ == "__main__":
+    # Forcer Python à utiliser IPv4 si nécessaire
+    socket.setdefaultfamily(socket.AF_INET)
     main()
