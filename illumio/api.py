@@ -1,7 +1,7 @@
 import requests
 import time
 from urllib3.exceptions import InsecureRequestWarning
-from .exceptions import APIRequestError, AuthenticationError, TimeoutError
+from .exceptions import APIRequestError, AuthenticationError, TimeoutError, AsyncOperationError
 from .utils import load_config
 
 # Désactiver les avertissements pour les certificats auto-signés
@@ -72,76 +72,81 @@ class IllumioAPI:
         except requests.exceptions.RequestException as e:
             raise APIRequestError(0, str(e))
     
-    def _make_paginated_request(self, method, endpoint, data=None, params=None):
-        """Méthode pour faire des requêtes paginées à l'API et récupérer absolument TOUS les résultats."""
+    def _make_async_request(self, method, endpoint, data=None, params=None, polling_interval=5, max_attempts=60):
+        """
+        Effectue une requête asynchrone.
+        
+        Args:
+            method (str): Méthode HTTP (GET, POST, etc.)
+            endpoint (str): Point d'accès de l'API
+            data (dict, optional): Données à envoyer pour POST/PUT
+            params (dict, optional): Paramètres de requête
+            polling_interval (int): Intervalle en secondes entre les vérifications d'état
+            max_attempts (int): Nombre maximal de tentatives de vérification
+            
+        Returns:
+            Les résultats de l'opération asynchrone
+            
+        Raises:
+            AsyncOperationError: Si l'opération asynchrone échoue
+            TimeoutError: Si l'opération n'est pas terminée dans le délai imparti
+        """
         if params is None:
             params = {}
         
-        # Initialiser la liste des résultats
-        all_results = []
+        # Ajouter les paramètres spécifiques pour une requête asynchrone
+        async_params = params.copy()
+        async_params['async'] = 'true'  # Indiquer que nous voulons une opération asynchrone
         
-        # Paramètres de pagination - utiliser la limite maximale supportée par l'API Illumio (500)
-        if 'limit' not in params:
-            params['limit'] = 500
+        print(f"Démarrage d'une requête asynchrone pour l'endpoint {endpoint}...")
         
-        # Première requête sans offset
-        print(f"  Récupération de la page 1 (limite: {params['limit']})...")
-        response = self._make_request(method, endpoint, data, params)
+        # Soumission de la requête asynchrone
+        response = self._make_request(method, endpoint, data, async_params)
         
-        # Si la réponse n'est pas une liste, la retourner telle quelle
-        if not isinstance(response, list):
+        # Vérifier si la réponse contient un ID d'opération
+        if not isinstance(response, dict) or 'href' not in response:
+            # Si l'API ne retourne pas d'identifiant d'opération asynchrone, 
+            # c'est qu'elle a peut-être traité la requête de manière synchrone
             return response
         
-        # Ajouter les résultats de la première page
-        all_results.extend(response)
-        print(f"  Éléments récupérés: {len(all_results)}")
+        # Extraire l'ID de l'opération asynchrone de la réponse
+        operation_href = response['href']
+        operation_id = operation_href.split('/')[-1]
         
-        # Si la réponse est vide ou contient moins d'éléments que la limite, on a terminé
-        if not response or len(response) < params['limit']:
-            return all_results
+        print(f"Opération asynchrone démarrée avec l'ID: {operation_id}")
+        print("Surveillance de l'état de l'opération...")
         
-        # Récupérer les pages suivantes avec pagination
-        current_offset = params['limit']
-        page = 2
+        # Suivre l'état de l'opération asynchrone
+        attempts = 0
+        while attempts < max_attempts:
+            # Récupérer l'état actuel de l'opération
+            status_response = self._make_request('get', f"async_queries/{operation_id}")
+            
+            status = status_response.get('status')
+            print(f"  État de l'opération: {status}")
+            
+            # Vérifier si l'opération est terminée
+            if status == 'completed':
+                print("Opération terminée avec succès, récupération des résultats...")
+                # Récupérer les résultats
+                results = self._make_request('get', f"async_queries/{operation_id}/download")
+                return results
+            elif status in ['failed', 'error']:
+                error_message = status_response.get('error_message', 'Raison inconnue')
+                raise AsyncOperationError(operation_id, status, error_message)
+            
+            # Attendre avant la prochaine vérification
+            print(f"  En attente... ({attempts + 1}/{max_attempts})")
+            time.sleep(polling_interval)
+            attempts += 1
         
-        # Continuer à récupérer des pages tant qu'il y a des résultats
-        while True:
-            # Mettre à jour l'offset pour la prochaine page
-            params_with_offset = params.copy()
-            params_with_offset['offset'] = current_offset
-            
-            # Afficher la progression
-            print(f"  Récupération de la page {page} (offset: {current_offset}, limite: {params['limit']})...")
-            
-            # Faire la requête pour la page suivante
-            next_page = self._make_request(method, endpoint, data, params_with_offset)
-            
-            # Si la page est vide, on a terminé
-            if not next_page or len(next_page) == 0:
-                break
-            
-            # Ajouter les résultats de la page
-            all_results.extend(next_page)
-            print(f"  Total d'éléments récupérés: {len(all_results)}")
-            
-            # Si la page contient moins d'éléments que la limite, on a terminé
-            if len(next_page) < params['limit']:
-                break
-            
-            # Mettre à jour l'offset pour la prochaine page
-            current_offset += len(next_page)
-            page += 1
-            
-            # Pause courte pour éviter de surcharger l'API
-            time.sleep(0.5)
-        
-        print(f"  Récupération terminée: {len(all_results)} éléments au total")
-        return all_results
+        # Si on arrive ici, c'est que l'opération a expiré
+        raise TimeoutError(f"L'opération asynchrone n'a pas été complétée après {max_attempts * polling_interval} secondes")
     
     def test_connection(self):
         """Teste la connexion au PCE Illumio."""
         try:
-            self._make_request('get', 'labels')
+            self._make_request('get', 'labels', params={'limit': 1})
             return True, "Connexion réussie"
         except AuthenticationError as e:
             return False, str(e)
@@ -151,19 +156,21 @@ class IllumioAPI:
             return False, f"Exception: {str(e)}"
     
     def get_workloads(self, params=None):
-        """Récupère la liste complète des workloads avec filtres optionnels."""
-        return self._make_paginated_request('get', 'workloads', params=params)
+        """Récupère la liste des workloads avec filtres optionnels."""
+        print("Récupération des workloads (mode asynchrone)...")
+        return self._make_async_request('get', 'workloads', params=params)
     
     def get_workload(self, workload_id):
         """Récupère les détails d'un workload spécifique."""
         return self._make_request('get', f'workloads/{workload_id}')
     
     def get_labels(self):
-        """Récupère la liste complète des labels."""
-        return self._make_paginated_request('get', 'labels')
+        """Récupère la liste des labels."""
+        print("Récupération des labels (mode asynchrone)...")
+        return self._make_async_request('get', 'labels')
     
     def get_ip_lists(self, pversion='draft', params=None):
-        """Récupère la liste complète des IP lists.
+        """Récupère la liste des IP lists.
         
         Args:
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
@@ -172,12 +179,12 @@ class IllumioAPI:
         if params is None:
             params = {}
         
-        # IMPORTANT: pversion est inclus dans le chemin, pas en tant que paramètre de requête
+        print("Récupération des listes d'IPs (mode asynchrone)...")
         endpoint = f"sec_policy/{pversion}/ip_lists"
-        return self._make_paginated_request('get', endpoint, params=params)
+        return self._make_async_request('get', endpoint, params=params)
     
     def get_services(self, pversion='draft', params=None):
-        """Récupère la liste complète des services.
+        """Récupère la liste des services.
         
         Args:
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
@@ -186,12 +193,12 @@ class IllumioAPI:
         if params is None:
             params = {}
         
-        # IMPORTANT: pversion est inclus dans le chemin, pas en tant que paramètre de requête
+        print("Récupération des services (mode asynchrone)...")
         endpoint = f"sec_policy/{pversion}/services"
-        return self._make_paginated_request('get', endpoint, params=params)
+        return self._make_async_request('get', endpoint, params=params)
     
     def get_label_groups(self, pversion='draft', params=None):
-        """Récupère la liste complète des groupes de labels.
+        """Récupère la liste des groupes de labels.
         
         Args:
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
@@ -200,9 +207,9 @@ class IllumioAPI:
         if params is None:
             params = {}
         
-        # IMPORTANT: pversion est inclus dans le chemin, pas en tant que paramètre de requête
+        print("Récupération des groupes de labels (mode asynchrone)...")
         endpoint = f"sec_policy/{pversion}/label_groups"
-        return self._make_paginated_request('get', endpoint, params=params)
+        return self._make_async_request('get', endpoint, params=params)
     
     def get_label_dimensions(self):
         """Récupère les dimensions de labels disponibles."""
@@ -210,7 +217,8 @@ class IllumioAPI:
     
     def get_traffic_flows(self, params=None):
         """Récupère les flux de trafic avec filtres optionnels."""
-        return self._make_paginated_request('get', 'traffic_flows', params=params)
+        print("Récupération des flux de trafic...")
+        return self._make_request('get', 'traffic_flows', params=params)
     
     # Méthodes d'API pour les opérations asynchrones d'analyse de trafic
     
@@ -224,4 +232,5 @@ class IllumioAPI:
     
     def get_async_traffic_query_results(self, query_id):
         """Récupère les résultats d'une requête asynchrone de trafic."""
-        return self._make_paginated_request('get', f'traffic_flows/async_queries/{query_id}/download')
+        print("Récupération des résultats d'analyse de trafic...")
+        return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
