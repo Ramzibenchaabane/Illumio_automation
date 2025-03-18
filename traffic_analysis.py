@@ -158,3 +158,6 @@ def main():
     print(f"\nDurée de l'analyse: {duration:.2f} secondes")
     
     return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

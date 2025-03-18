@@ -1,4 +1,113 @@
-#!/usr/bin/env python3
+def export_to_csv(flows, filename):
+    """Exporte les flux de trafic au format CSV."""
+    import csv
+    
+    if not filename.endswith('.csv'):
+        filename += '.csv'
+    
+    try:
+        with open(filename, 'w', newline='') as csvfile:
+            # Déterminer les en-têtes à partir des clés du premier flux
+            fieldnames = [
+                'src_ip', 'src_workload_id', 'dst_ip', 'dst_workload_id',
+                'service', 'port', 'protocol', 'policy_decision',
+                'first_detected', 'last_detected', 'num_connections', 'flow_direction'
+            ]
+            
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for flow in flows:
+                # Ne garder que les champs dans fieldnames
+                filtered_flow = {k: flow.get(k) for k in fieldnames if k in flow}
+                writer.writerow(filtered_flow)
+        
+        print(f"\n✅ Export CSV terminé. Fichier sauvegardé: {filename}")
+    
+    except Exception as e:
+        print(f"Erreur lors de l'export CSV: {e}")
+
+def export_to_json(flows, filename):
+    """Exporte les flux de trafic au format JSON."""
+    import json
+    
+    if not filename.endswith('.json'):
+        filename += '.json'
+    
+    try:
+        with open(filename, 'w') as jsonfile:
+            # Limiter les champs à exporter pour plus de lisibilité
+            simplified_flows = []
+            
+            for flow in flows:
+                simplified_flow = {
+                    'src_ip': flow.get('src_ip'),
+                    'src_workload_id': flow.get('src_workload_id'),
+                    'dst_ip': flow.get('dst_ip'),
+                    'dst_workload_id': flow.get('dst_workload_id'),
+                    'service': flow.get('service'),
+                    'port': flow.get('port'),
+                    'protocol': flow.get('protocol'),
+                    'policy_decision': flow.get('policy_decision'),
+                    'first_detected': flow.get('first_detected'),
+                    'last_detected': flow.get('last_detected'),
+                    'num_connections': flow.get('num_connections'),
+                    'flow_direction': flow.get('flow_direction')
+                }
+                simplified_flows.append(simplified_flow)
+            
+            json.dump(simplified_flows, jsonfile, indent=2)
+        
+        print(f"\n✅ Export JSON terminé. Fichier sauvegardé: {filename}")
+    
+    except Exception as e:
+        print(f"Erreur lors de l'export JSON: {e}")
+
+def main():
+    """Fonction principale du CLI interactif."""
+    # Vérifier si la base de données existe déjà
+    db_file = 'data/illumio.db'
+    db_exists = os.path.exists(db_file)
+    
+    # Afficher un message d'accueil
+    print_header()
+    print("Bienvenue dans l'outil d'automatisation Illumio!")
+    print("\nCet outil vous permet de gérer et d'analyser votre environnement Illumio.")
+    
+    # Proposer de synchroniser la base de données au démarrage si elle n'existe pas
+    if not db_exists:
+        print("\nLa base de données locale n'a pas été détectée.")
+        choice = input("Voulez-vous la synchroniser maintenant? (o/n): ").lower()
+        if choice in ('o', 'oui', 'y', 'yes'):
+            sync_database_menu()
+    
+    # Boucle principale du menu
+    while True:
+        print_header()
+        print("MENU PRINCIPAL\n")
+        
+        main_options = [
+            "Synchroniser la base de données",
+            "Analyse de trafic",
+            # Ajoutez ici d'autres options de menu au fur et à mesure
+        ]
+        
+        print_menu(main_options)
+        choice = get_user_choice(len(main_options))
+        
+        if choice == 0:
+            print("\nMerci d'avoir utilisé l'outil d'automatisation Illumio. Au revoir!")
+            return 0
+        
+        # Rediriger vers le sous-menu approprié
+        if choice == 1:
+            sync_database_menu()
+        elif choice == 2:
+            traffic_analysis_menu()
+        # Ajoutez d'autres options ici au fur et à mesure
+
+if __name__ == "__main__":
+    sys.exit(main())#!/usr/bin/env python3
 import sys
 import os
 import time
@@ -443,114 +552,3 @@ def export_traffic_analysis():
     
     except Exception as e:
         print(f"Erreur lors de l'export: {e}")
-
-def export_to_csv(flows, filename):
-    """Exporte les flux de trafic au format CSV."""
-    import csv
-    
-    if not filename.endswith('.csv'):
-        filename += '.csv'
-    
-    try:
-        with open(filename, 'w', newline='') as csvfile:
-            # Déterminer les en-têtes à partir des clés du premier flux
-            fieldnames = [
-                'src_ip', 'src_workload_id', 'dst_ip', 'dst_workload_id',
-                'service', 'port', 'protocol', 'policy_decision',
-                'first_detected', 'last_detected', 'num_connections', 'flow_direction'
-            ]
-            
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            
-            for flow in flows:
-                # Ne garder que les champs dans fieldnames
-                filtered_flow = {k: flow.get(k) for k in fieldnames if k in flow}
-                writer.writerow(filtered_flow)
-        
-        print(f"\n✅ Export CSV terminé. Fichier sauvegardé: {filename}")
-    
-    except Exception as e:
-        print(f"Erreur lors de l'export CSV: {e}")
-
-def export_to_json(flows, filename):
-    """Exporte les flux de trafic au format JSON."""
-    import json
-    
-    if not filename.endswith('.json'):
-        filename += '.json'
-    
-    try:
-        with open(filename, 'w') as jsonfile:
-            # Limiter les champs à exporter pour plus de lisibilité
-            simplified_flows = []
-            
-            for flow in flows:
-                simplified_flow = {
-                    'src_ip': flow.get('src_ip'),
-                    'src_workload_id': flow.get('src_workload_id'),
-                    'dst_ip': flow.get('dst_ip'),
-                    'dst_workload_id': flow.get('dst_workload_id'),
-                    'service': flow.get('service'),
-                    'port': flow.get('port'),
-                    'protocol': flow.get('protocol'),
-                    'policy_decision': flow.get('policy_decision'),
-                    'first_detected': flow.get('first_detected'),
-                    'last_detected': flow.get('last_detected'),
-                    'num_connections': flow.get('num_connections'),
-                    'flow_direction': flow.get('flow_direction')
-                }
-                simplified_flows.append(simplified_flow)
-            
-            json.dump(simplified_flows, jsonfile, indent=2)
-        
-        print(f"\n✅ Export JSON terminé. Fichier sauvegardé: {filename}")
-    
-    except Exception as e:
-        print(f"Erreur lors de l'export JSON: {e}")
-
-def main():
-    """Fonction principale du CLI interactif."""
-    # Vérifier si la base de données existe déjà
-    db_file = 'data/illumio.db'
-    db_exists = os.path.exists(db_file)
-    
-    # Afficher un message d'accueil
-    print_header()
-    print("Bienvenue dans l'outil d'automatisation Illumio!")
-    print("\nCet outil vous permet de gérer et d'analyser votre environnement Illumio.")
-    
-    # Proposer de synchroniser la base de données au démarrage si elle n'existe pas
-    if not db_exists:
-        print("\nLa base de données locale n'a pas été détectée.")
-        choice = input("Voulez-vous la synchroniser maintenant? (o/n): ").lower()
-        if choice in ('o', 'oui', 'y', 'yes'):
-            sync_database_menu()
-    
-    # Boucle principale du menu
-    while True:
-        print_header()
-        print("MENU PRINCIPAL\n")
-        
-        main_options = [
-            "Synchroniser la base de données",
-            "Analyse de trafic",
-            # Ajoutez ici d'autres options de menu au fur et à mesure
-        ]
-        
-        print_menu(main_options)
-        choice = get_user_choice(len(main_options))
-        
-        if choice == 0:
-            print("\nMerci d'avoir utilisé l'outil d'automatisation Illumio. Au revoir!")
-            return 0
-        
-        # Rediriger vers le sous-menu approprié
-        if choice == 1:
-            sync_database_menu()
-        elif choice == 2:
-            traffic_analysis_menu()
-        # Ajoutez d'autres options ici au fur et à mesure
-
-if __name__ == "__main__":
-    sys.exit(main())

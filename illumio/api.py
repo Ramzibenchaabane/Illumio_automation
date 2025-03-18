@@ -123,7 +123,7 @@ class IllumioAPI:
             status_response = self._make_request('get', f"async_queries/{operation_id}")
             
             status = status_response.get('status')
-            print(f"  État de l'opération: {status}")
+            print(f"  État de l'opération asynchrone: {status} (tentative {attempts+1}/{max_attempts})")
             
             # Vérifier si l'opération est terminée
             if status == 'completed':
@@ -136,7 +136,6 @@ class IllumioAPI:
                 raise AsyncOperationError(operation_id, status, error_message)
             
             # Attendre avant la prochaine vérification
-            print(f"  En attente... ({attempts + 1}/{max_attempts})")
             time.sleep(polling_interval)
             attempts += 1
         
