@@ -41,7 +41,6 @@ class IllumioAPI:
         """Méthode générique pour faire des requêtes à l'API."""
         url = f"{self.base_url}/api/v2/orgs/{self.org_id}/{endpoint}"
         
-        # Initialiser params s'il est None
         if params is None:
             params = {}
             
@@ -97,29 +96,47 @@ class IllumioAPI:
         """Récupère la liste des labels."""
         return self._make_request('get', 'labels')
     
-    def get_ip_lists(self, pversion='draft'):
+    def get_ip_lists(self, pversion='draft', params=None):
         """Récupère la liste des IP lists.
         
         Args:
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
+            params (dict): Paramètres additionnels pour la requête.
         """
-        return self._make_request('get', 'sec_policy/ip_lists', params={'pversion': pversion})
+        if params is None:
+            params = {}
+        
+        # IMPORTANT: pversion est inclus dans le chemin, pas en tant que paramètre de requête
+        endpoint = f"sec_policy/{pversion}/ip_lists"
+        return self._make_request('get', endpoint, params=params)
     
-    def get_services(self, pversion='draft'):
+    def get_services(self, pversion='draft', params=None):
         """Récupère la liste des services.
         
         Args:
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
+            params (dict): Paramètres additionnels pour la requête.
         """
-        return self._make_request('get', 'sec_policy/services', params={'pversion': pversion})
+        if params is None:
+            params = {}
+        
+        # IMPORTANT: pversion est inclus dans le chemin, pas en tant que paramètre de requête
+        endpoint = f"sec_policy/{pversion}/services"
+        return self._make_request('get', endpoint, params=params)
     
-    def get_label_groups(self, pversion='draft'):
+    def get_label_groups(self, pversion='draft', params=None):
         """Récupère la liste des groupes de labels.
         
         Args:
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
+            params (dict): Paramètres additionnels pour la requête.
         """
-        return self._make_request('get', 'sec_policy/label_groups', params={'pversion': pversion})
+        if params is None:
+            params = {}
+        
+        # IMPORTANT: pversion est inclus dans le chemin, pas en tant que paramètre de requête
+        endpoint = f"sec_policy/{pversion}/label_groups"
+        return self._make_request('get', endpoint, params=params)
     
     def get_label_dimensions(self):
         """Récupère les dimensions de labels disponibles."""
