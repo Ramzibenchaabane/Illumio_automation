@@ -20,3 +20,18 @@ class APIRequestError(IllumioAPIError):
 class TimeoutError(IllumioAPIError):
     """Erreur de délai d'attente dépassé pour une opération."""
     pass
+
+class AsyncOperationError(IllumioAPIError):
+    """Erreur lors d'une opération asynchrone."""
+    def __init__(self, operation_id, status, message):
+        self.operation_id = operation_id
+        self.status = status
+        self.message = message
+        super().__init__(f"Async Operation Error (ID: {operation_id}, Status: {status}): {message}")
+
+class RetryError(IllumioAPIError):
+    """Erreur après plusieurs tentatives de retry."""
+    def __init__(self, attempts, original_error):
+        self.attempts = attempts
+        self.original_error = original_error
+        super().__init__(f"Opération échouée après {attempts} tentatives: {original_error}")

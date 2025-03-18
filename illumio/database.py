@@ -188,6 +188,21 @@ class IllumioDatabase:
                 FOREIGN KEY (dst_workload_id) REFERENCES workloads (id)
             )
             ''')
+
+            # Table pour les opérations asynchrones génériques
+            self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS async_operations (
+                id TEXT PRIMARY KEY,
+                operation_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                data TEXT,
+                result_id TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                error_message TEXT
+            )
+            ''')
             
             self.conn.commit()
             return True
@@ -447,6 +462,128 @@ class IllumioDatabase:
         
         finally:
             self.close()
+
+    # Méthodes pour gérer les opérations asynchrones génériques
+    
+    def store_async_operation(self, operation_id, operation_type, status, data=None, result_id=None):
+        """Stocke une opération asynchrone dans la base de données."""
+        try:
+            self.connect()
+            
+            self.cursor.execute('''
+            INSERT OR REPLACE INTO async_operations 
+            (id, operation_type, status, data, result_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ''', (
+                operation_id,
+                operation_type,
+                status,
+                json.dumps(data) if data else None,
+                result_id
+            ))
+            
+            self.conn.commit()
+            return True
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors du stockage de l'opération asynchrone: {e}")
+            self.conn.rollback()
+            return False
+            
+        finally:
+            self.close()
+    
+    def update_async_operation_status(self, operation_id, status, error_message=None):
+        """Met à jour le statut d'une opération asynchrone."""
+        try:
+            self.connect()
+            
+            # Définir la date de complétion si l'opération est terminée
+            completed_at = "CURRENT_TIMESTAMP" if status in ["completed", "failed"] else None
+            
+            if completed_at:
+                self.cursor.execute('''
+                UPDATE async_operations
+                SET status = ?, updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP, error_message = ?
+                WHERE id = ?
+                ''', (status, error_message, operation_id))
+            else:
+                self.cursor.execute('''
+                UPDATE async_operations
+                SET status = ?, updated_at = CURRENT_TIMESTAMP, error_message = ?
+                WHERE id = ?
+                ''', (status, error_message, operation_id))
+            
+            self.conn.commit()
+            return True
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la mise à jour du statut de l'opération: {e}")
+            self.conn.rollback()
+            return False
+            
+        finally:
+            self.close()
+    
+    def get_async_operation(self, operation_id):
+        """Récupère les détails d'une opération asynchrone."""
+        try:
+            self.connect()
+            
+            self.cursor.execute('''
+            SELECT * FROM async_operations WHERE id = ?
+            ''', (operation_id,))
+            
+            row = self.cursor.fetchone()
+            if row:
+                # Convertir les données JSON si présentes
+                result = dict(row)
+                if result.get('data'):
+                    result['data'] = json.loads(result['data'])
+                return result
+            
+            return None
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la récupération de l'opération asynchrone: {e}")
+            return None
+            
+        finally:
+            self.close()
+    
+    def get_async_operations_by_type(self, operation_type, status=None):
+        """Récupère les opérations asynchrones par type et statut optionnel."""
+        try:
+            self.connect()
+            
+            if status:
+                self.cursor.execute('''
+                SELECT * FROM async_operations 
+                WHERE operation_type = ? AND status = ?
+                ORDER BY created_at DESC
+                ''', (operation_type, status))
+            else:
+                self.cursor.execute('''
+                SELECT * FROM async_operations 
+                WHERE operation_type = ?
+                ORDER BY created_at DESC
+                ''', (operation_type,))
+            
+            results = []
+            for row in self.cursor.fetchall():
+                result = dict(row)
+                if result.get('data'):
+                    result['data'] = json.loads(result['data'])
+                results.append(result)
+            
+            return results
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la récupération des opérations asynchrones: {e}")
+            return []
+            
+        finally:
+            self.close()
     
     def store_traffic_query(self, query_data, query_id, status='created'):
         """Stocke une requête de trafic asynchrone dans la base de données."""
@@ -464,11 +601,41 @@ class IllumioDatabase:
                 json.dumps(query_data)
             ))
             
+            # Également stocker dans la nouvelle table d'opérations asynchrones
+            self.store_async_operation(
+                operation_id=query_id,
+                operation_type='traffic_analysis',
+                status=status,
+                data=query_data
+            )
+            
             self.conn.commit()
             return True
             
         except sqlite3.Error as e:
             print(f"Erreur lors du stockage de la requête de trafic: {e}")
+            self.conn.rollback()
+            return False
+            
+        finally:
+            self.close()
+    
+    def update_traffic_query_id(self, temp_id, new_id):
+        """Met à jour l'ID d'une requête de trafic temporaire avec l'ID réel de l'API."""
+        try:
+            self.connect()
+            
+            self.cursor.execute('''
+            UPDATE traffic_queries
+            SET id = ?
+            WHERE id = ?
+            ''', (new_id, temp_id))
+            
+            self.conn.commit()
+            return True
+            
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la mise à jour de l'ID de la requête: {e}")
             self.conn.rollback()
             return False
             
@@ -486,6 +653,9 @@ class IllumioDatabase:
                 completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
             WHERE id = ?
             ''', (status, status, query_id))
+            
+            # Également mettre à jour dans la nouvelle table d'opérations asynchrones
+            self.update_async_operation_status(query_id, status)
             
             self.conn.commit()
             return True
@@ -542,6 +712,13 @@ class IllumioDatabase:
             
             # Mettre à jour le statut de la requête
             self.update_traffic_query_status(query_id, 'completed')
+            
+            # Mettre à jour les données dans la table d'opérations asynchrones
+            self.cursor.execute('''
+            UPDATE async_operations
+            SET result_id = ?, status = 'completed', updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            ''', (query_id, query_id))
             
             self.conn.commit()
             return True

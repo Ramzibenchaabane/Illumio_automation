@@ -146,6 +146,8 @@ class IllumioAPI:
         """Récupère les flux de trafic avec filtres optionnels."""
         return self._make_request('get', 'traffic_flows', params=params)
     
+    # Méthodes d'API pour les opérations asynchrones d'analyse de trafic
+    
     def create_async_traffic_query(self, query_data):
         """Crée une requête asynchrone pour analyser les flux de trafic."""
         return self._make_request('post', 'traffic_flows/async_queries', data=query_data)
@@ -157,43 +159,3 @@ class IllumioAPI:
     def get_async_traffic_query_results(self, query_id):
         """Récupère les résultats d'une requête asynchrone de trafic."""
         return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
-    
-    def execute_traffic_analysis(self, query_data, polling_interval=5, max_attempts=60):
-        """
-        Exécute une analyse de trafic asynchrone complète.
-        
-        Args:
-            query_data (dict): Données de la requête à soumettre
-            polling_interval (int): Intervalle en secondes entre les vérifications du statut
-            max_attempts (int): Nombre maximal de tentatives de vérification
-            
-        Returns:
-            dict: Résultats de l'analyse de trafic
-            
-        Raises:
-            TimeoutError: Si la requête n'est pas complétée dans le délai imparti
-        """
-        # Soumettre la requête
-        query_response = self.create_async_traffic_query(query_data)
-        query_id = query_response.get('id')
-        
-        if not query_id:
-            raise APIRequestError(0, "Impossible d'obtenir l'ID de la requête asynchrone")
-        
-        # Vérifier périodiquement le statut
-        attempts = 0
-        while attempts < max_attempts:
-            status_response = self.get_async_traffic_query_status(query_id)
-            status = status_response.get('status')
-            
-            if status == 'completed':
-                # Récupérer les résultats
-                return self.get_async_traffic_query_results(query_id)
-            
-            elif status == 'failed':
-                raise APIRequestError(0, f"La requête asynchrone a échoué: {status_response.get('error_message', 'Raison inconnue')}")
-            
-            time.sleep(polling_interval)
-            attempts += 1
-        
-        raise TimeoutError(f"La requête asynchrone n'a pas été complétée après {max_attempts * polling_interval} secondes")
