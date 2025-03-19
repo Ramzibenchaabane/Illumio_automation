@@ -175,7 +175,7 @@ class IllumioTrafficAnalyzer:
             import traceback
             print(traceback.format_exc())
             return False
-    
+        
     def _perform_deep_rule_analysis(self, query_id: str, polling_interval: int = 5, max_attempts: int = 60) -> Union[List[Dict[str, Any]], None]:
         """
         Effectue une analyse de règles approfondie après une requête de trafic asynchrone.
@@ -223,10 +223,26 @@ class IllumioTrafficAnalyzer:
                 
                 # Vérifier si l'attribut 'rules' est présent dans la réponse
                 if 'rules' in status_response:
-                    # Récupérer le statut de l'analyse des règles
-                    rules_status = status_response.get('rules', {}).get('status')
+                    # Vérifier si rules est un dictionnaire
+                    rules = status_response.get('rules')
                     
-                    if rules_status:
+                    if isinstance(rules, dict) and 'status' in rules:
+                        # Si rules est un dictionnaire et contient un attribut status
+                        rules_status = rules.get('status')
+                        
+                        print(f"  État de l'analyse de règles: {rules_status} (tentative {attempts+1}/{max_attempts})")
+                        
+                        # Mettre à jour le statut dans la base de données
+                        if self.save_to_db:
+                            self.db.update_traffic_query_rules_status(query_id, rules_status)
+                        
+                        # Vérifier si l'analyse est terminée
+                        if rules_status == 'completed':
+                            print("Analyse de règles terminée avec succès.")
+                            break
+                    elif isinstance(rules, str):
+                        # Si rules est une chaîne, utiliser directement cette valeur comme status
+                        rules_status = rules
                         print(f"  État de l'analyse de règles: {rules_status} (tentative {attempts+1}/{max_attempts})")
                         
                         # Mettre à jour le statut dans la base de données
@@ -238,7 +254,7 @@ class IllumioTrafficAnalyzer:
                             print("Analyse de règles terminée avec succès.")
                             break
                     else:
-                        print(f"  État de l'analyse de règles non disponible... (tentative {attempts+1}/{max_attempts})")
+                        print(f"  Format de 'rules' inattendu: {type(rules)} - {rules}")
                 else:
                     print(f"  En attente du début de l'analyse de règles... (tentative {attempts+1}/{max_attempts})")
                 
