@@ -1,0 +1,179 @@
+# Illumio Automation Tool
+version v1
+## Vue d'ensemble
+
+L'Illumio Automation Tool est une application Python conçue pour simplifier les interactions avec l'API Illumio PCE (Policy Compute Engine). Cet outil vous permet d'automatiser des tâches courantes telles que la synchronisation des données entre l'API Illumio et une base de données locale, ainsi que l'analyse de trafic réseau.
+
+## Fonctionnalités
+
+### Synchronisation de données
+- Récupération et stockage des workloads
+- Récupération et stockage des labels
+- Récupération et stockage des listes d'IPs
+- Récupération et stockage des services
+- Récupération et stockage des groupes de labels
+- Synchronisation complète ou sélective
+
+### Analyse de trafic
+- Création de requêtes d'analyse de trafic personnalisées
+- Surveillance des requêtes asynchrones
+- Visualisation des résultats d'analyse
+- Export des résultats en formats CSV et JSON
+
+### Interface utilisateur
+- Interface en ligne de commande (CLI) intuitive
+- Menu interactif pour une navigation facile
+- Affichage des statistiques de la base de données
+- Fonctionnalités de gestion des requêtes et des résultats
+
+## Prérequis
+
+- Python 3.6 ou supérieur
+- Accès à une instance Illumio PCE
+- Tokens d'authentification Illumio (CSRF token et session cookie)
+
+## Installation
+
+1. Clonez le dépôt :
+   ```bash
+   git clone <url-du-repository>
+   cd illumio-automation-tool
+   ```
+
+2. Installation des dépendances :
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Configuration de l'accès à l'API :
+   ```bash
+   # Créer le dossier de configuration s'il n'existe pas
+   mkdir -p config
+   ```
+
+4. Créez un fichier `config/config.ini` avec les informations d'accès à votre PCE Illumio :
+   ```ini
+   [illumio]
+   base_url = https://votre-pce.illumio.com:8443
+   org_id = 1
+   verify_ssl = false
+   csrf_token = votre_csrf_token
+   session_cookie = votre_session_cookie
+   ```
+
+   > **Note :** Vous pouvez obtenir le CSRF token et le cookie de session en vous connectant à l'interface web Illumio et en examinant les en-têtes des requêtes à l'aide des outils de développement de votre navigateur.
+
+## Utilisation
+
+### Interface en ligne de commande
+
+Lancez l'application avec la commande :
+```bash
+python main.py
+```
+
+Vous serez présenté avec le menu principal qui vous permet de :
+1. Synchroniser la base de données
+2. Accéder aux fonctionnalités d'analyse de trafic
+3. Afficher les statistiques
+
+### Scripts autonomes
+
+#### Synchronisation des données
+
+```bash
+python sync_data.py --all
+```
+
+Options disponibles :
+- `--all` : Synchronise tous les types de données
+- `--workloads` : Synchronise uniquement les workloads
+- `--labels` : Synchronise uniquement les labels
+- `--ip-lists` : Synchronise uniquement les listes d'IPs
+- `--services` : Synchronise uniquement les services
+- `--label-groups` : Synchronise uniquement les groupes de labels
+
+#### Analyse de trafic
+
+```bash
+python traffic_analysis.py -n "Mon analyse" -d 30 -m 10000
+```
+
+Options disponibles :
+- `-n, --name` : Nom de la requête d'analyse
+- `-d, --days` : Nombre de jours à analyser (par défaut : 7)
+- `-m, --max` : Nombre maximum de résultats (par défaut : 10000)
+- `-f, --file` : Charger une requête depuis un fichier JSON
+- `-o, --output` : Spécifier un fichier de sortie pour les résultats
+- `--format` : Format d'export (json ou csv, par défaut : json)
+- `--list` : Lister les analyses existantes
+- `--get` : Récupérer les résultats d'une analyse par ID
+- `--no-db` : Ne pas stocker les résultats dans la base de données
+
+## Structure de données
+
+L'application stocke les données dans une base de données SQLite (`data/illumio.db`) avec les tables suivantes :
+
+- `workloads` : Informations sur les workloads
+- `labels` : Labels utilisés pour catégoriser les workloads
+- `ip_lists` : Listes d'adresses IP
+- `services` : Services réseau
+- `label_groups` : Groupes de labels
+- `traffic_queries` : Requêtes d'analyse de trafic
+- `traffic_flows` : Flux de trafic réseau
+- `async_operations` : Suivi des opérations asynchrones
+
+## Architecture du code
+
+- `illumio/` : Package principal contenant les modules de base
+  - `api_core.py` : Fonctionnalités de communication avec l'API
+  - `api.py` : Méthodes spécifiques pour chaque type de ressource
+  - `database.py` : Gestion de la base de données
+  - `sync_manager.py` : Synchronisation des données
+  - `traffic_analyzer.py` : Analyse de trafic
+  - `async_operations.py` : Gestion des opérations asynchrones
+  - `exceptions.py` : Exceptions personnalisées
+  - `utils.py` : Fonctions utilitaires
+  
+- `cli_modules/` : Modules de l'interface en ligne de commande
+  - `menu_utils.py` : Utilitaires pour l'interface CLI
+  - `sync_menu.py` : Menu de synchronisation
+  - `traffic_menu.py` : Menu d'analyse de trafic
+
+- `main.py` : Point d'entrée principal de l'application
+- `sync_data.py` : Script autonome pour la synchronisation
+- `traffic_analysis.py` : Script autonome pour l'analyse de trafic
+
+## Dépannage
+
+### Problèmes d'authentification
+Si vous rencontrez des erreurs d'authentification :
+1. Vérifiez que votre PCE est accessible depuis votre réseau
+2. Assurez-vous que vos tokens d'authentification sont à jour
+3. Vérifiez que l'ID d'organisation est correct
+
+### Performance
+Si la synchronisation est lente :
+- Considérez la synchronisation sélective au lieu de la synchronisation complète
+- Utilisez des filtres pour limiter la quantité de données récupérées
+
+### Base de données
+Si vous rencontrez des problèmes avec la base de données :
+- Supprimez le fichier `data/illumio.db` et relancez l'application pour recréer la structure
+- Vérifiez les permissions d'écriture dans le dossier `data/`
+
+## Avertissements
+
+- Cette application utilise des tokens d'authentification stockés en texte brut. Ne partagez pas votre fichier de configuration.
+- Les certificats SSL auto-signés sont acceptés par défaut (`verify_ssl = false`). Dans un environnement de production, il est recommandé de configurer la validation SSL correctement.
+
+## Contribuer
+
+Les contributions sont les bienvenues ! Voici comment vous pouvez contribuer :
+1. Forkez le dépôt
+2. Créez une branche pour votre fonctionnalité
+3. Soumettez une pull request
+
+## Licence
+
+Ce projet est distribué sous licence MIT.
