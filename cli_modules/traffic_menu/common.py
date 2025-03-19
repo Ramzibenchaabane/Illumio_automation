@@ -173,55 +173,55 @@ class FlowDisplayFormatter:
     @staticmethod
     def format_flow_table(flows, limit=20):
         """
-        Affiche un tableau formaté des flux de trafic.
+        Affiche un tableau formaté des flux de trafic, identique au format CSV exporté.
         
         Args:
             flows (list): Liste des flux de trafic
             limit (int): Limite du nombre de flux à afficher
         """
-        print("\n" + "-" * 115)
-        print(f"{'SOURCE':<16} {'DESTINATION':<16} {'SERVICE':<20} {'PORT':<8} {'PROTO':<8} {'DÉCISION':<15} {'CONNEXIONS':<10} {'RÈGLE':<20}")
-        print("-" * 115)
+        print("\n" + "-" * 120)
+        print(f"{'SOURCE':<16} {'DESTINATION':<16} {'SERVICE':<20} {'DÉCISION':<15} {'CONNEXIONS':<12} {'DIRECTION':<10} {'RÈGLE ID':<25} {'RÈGLE NOM':<20}")
+        print("-" * 120)
         
         for i, flow in enumerate(flows):
             if i >= limit:
-                print(f"\n... et {len(flows) - limit} autres flux (utilisez --limit pour voir plus de résultats).")
+                print(f"\n... et {len(flows) - limit} autres flux.")
                 break
             
             try:
-                # Extraire les données du flux
-                flow_data = FlowDisplayFormatter._extract_flow_data(flow)
+                # Extraire les données du flux selon le format CSV
+                flow_data = FlowDisplayFormatter._extract_flow_data_csv_format(flow)
                 
                 # Formater et afficher la ligne
-                print(f"{flow_data['src_ip']:<16} {flow_data['dst_ip']:<16} "
-                      f"{flow_data['service_name']:<20} {flow_data['port']:<8} "
-                      f"{flow_data['protocol']:<8} {flow_data['decision']:<15} "
-                      f"{flow_data['connections']:<10} {flow_data['rule_name']:<20}")
+                print(f"{flow_data['src']:<16} {flow_data['dst']:<16} "
+                      f"{flow_data['service']:<20} {flow_data['policy_decision']:<15} "
+                      f"{flow_data['num_connections']:<12} {flow_data['flow_direction']:<10} "
+                      f"{flow_data['rule_href']:<25} {flow_data['rule_name']:<20}")
                 
             except Exception as e:
                 print(f"Erreur de formatage pour le flux {i}: {e}")
     
     @staticmethod
-    def _extract_flow_data(flow):
+    def _extract_flow_data_csv_format(flow):
         """
-        Extrait les données importantes d'un flux pour l'affichage.
+        Extrait les données d'un flux au format CSV.
         
         Args:
             flow (dict): Données du flux
         
         Returns:
-            dict: Données formatées pour l'affichage
+            dict: Données formatées selon le format CSV
         """
-        # Valeurs par défaut
+        # Valeurs par défaut identiques au format CSV exporté
         flow_data = {
-            'src_ip': 'N/A',
-            'dst_ip': 'N/A',
-            'service_name': 'N/A',
-            'port': 'N/A',
-            'protocol': 'N/A',
-            'decision': 'N/A',
-            'rule_name': 'N/A',
-            'connections': 'N/A'
+            'src': 'N/A',
+            'dst': 'N/A',
+            'service': 'N/A',
+            'policy_decision': 'N/A',
+            'num_connections': 'N/A',
+            'flow_direction': 'N/A',
+            'rule_href': 'N/A',
+            'rule_name': 'N/A'
         }
         
         # Si les données sont stockées dans raw_data (format JSON), les extraire
@@ -237,58 +237,80 @@ class FlowDisplayFormatter:
                     raw_data = flow.get('raw_data')
                 
                 if raw_data:
+                    # Extraire selon le format exporté en CSV
                     src = raw_data.get('src', {})
                     dst = raw_data.get('dst', {})
                     service = raw_data.get('service', {})
+                    
+                    flow_data['src'] = src.get('ip', 'N/A')
+                    flow_data['dst'] = dst.get('ip', 'N/A')
+                    flow_data['service'] = service.get('name', 'N/A')
+                    flow_data['policy_decision'] = raw_data.get('policy_decision', 'N/A')
+                    flow_data['num_connections'] = str(raw_data.get('num_connections', 'N/A'))
+                    flow_data['flow_direction'] = raw_data.get('flow_direction', 'N/A')
+                    
+                    # Extraire les informations de règles
                     rules = raw_data.get('rules')
-                    
-                    # Extraire les données de base
-                    flow_data['src_ip'] = src.get('ip') or 'N/A'
-                    flow_data['dst_ip'] = dst.get('ip') or 'N/A'
-                    flow_data['decision'] = raw_data.get('policy_decision') or 'N/A'
-                    flow_data['connections'] = str(raw_data.get('num_connections', 'N/A'))
-                    
-                    # Extraire le service et le port
-                    flow_data['service_name'] = service.get('name', 'N/A')
-                    flow_data['port'] = str(service.get('port', 'N/A'))
-                    flow_data['protocol'] = str(service.get('proto', 'N/A'))
-                    
-                    # Si aucun nom de service mais port/proto présents, les utiliser comme nom
-                    if flow_data['service_name'] == 'N/A' and flow_data['port'] != 'N/A' and flow_data['protocol'] != 'N/A':
-                        flow_data['service_name'] = f"{flow_data['port']}/{flow_data['protocol']}"
-                    
-                    # Extraire l'information de règle
                     if isinstance(rules, dict) and 'sec_policy' in rules:
                         # Ancien format (avant update_rules)
                         sec_policy = rules.get('sec_policy', {})
-                        if sec_policy and 'name' in sec_policy:
-                            flow_data['rule_name'] = sec_policy.get('name')
-                        elif sec_policy and 'href' in sec_policy:
-                            # Extraire l'ID de la règle depuis l'URL href
-                            flow_data['rule_name'] = sec_policy.get('href').split('/')[-1]
+                        flow_data['rule_href'] = sec_policy.get('href', 'N/A')
+                        flow_data['rule_name'] = sec_policy.get('name', 'N/A')
                     elif isinstance(rules, list) and len(rules) > 0:
                         # Nouveau format (après update_rules)
                         rule = rules[0]
-                        rule_href = rule.get('href', 'N/A')
-                        # Utiliser l'ID de la règle depuis l'URL href
-                        if rule_href != 'N/A':
-                            flow_data['rule_name'] = rule_href.split('/')[-1]
+                        flow_data['rule_href'] = rule.get('href', 'N/A')
+                        # Le nom de la règle est souvent l'ID à la fin de l'URL
+                        if flow_data['rule_href'] != 'N/A':
+                            flow_data['rule_name'] = flow_data['rule_href'].split('/')[-1]
+            
             except Exception as e:
                 print(f"Erreur lors de l'extraction des données JSON: {e}")
-        else:
-            # Si pas de raw_data, utiliser directement les champs de flow
-            flow_data['src_ip'] = flow.get('src_ip') or 'N/A'
-            flow_data['dst_ip'] = flow.get('dst_ip') or 'N/A'
-            flow_data['service_name'] = flow.get('service') or 'N/A'
-            flow_data['port'] = str(flow.get('port') or 'N/A')
-            flow_data['protocol'] = str(flow.get('protocol') or 'N/A')
-            flow_data['decision'] = flow.get('policy_decision') or 'N/A'
-            flow_data['rule_name'] = flow.get('rule_name') or 'N/A'
-            flow_data['connections'] = str(flow.get('num_connections') or 'N/A')
         
-        # Limiter la longueur de rule_name pour l'affichage
-        if flow_data['rule_name'] != 'N/A' and len(str(flow_data['rule_name'])) > 18:
-            flow_data['rule_name'] = str(flow_data['rule_name'])[:15] + '...'
+        else:
+            # Si pas de raw_data, utiliser directement les champs du flux
+            # Ces champs correspondent au schéma de la base de données
+            flow_data['src'] = flow.get('src_ip', 'N/A')
+            flow_data['dst'] = flow.get('dst_ip', 'N/A')
+            flow_data['service'] = flow.get('service', 'N/A')
+            flow_data['policy_decision'] = flow.get('policy_decision', 'N/A')
+            flow_data['num_connections'] = str(flow.get('num_connections', 'N/A'))
+            flow_data['flow_direction'] = flow.get('flow_direction', 'N/A')
+            flow_data['rule_href'] = flow.get('rule_href', 'N/A')
+            flow_data['rule_name'] = flow.get('rule_name', 'N/A')
+        
+        # Traiter les cas où le service est manquant mais port/proto sont présents
+        if flow_data['service'] == 'N/A':
+            port = None
+            proto = None
+            
+            # Chercher dans les données brutes
+            if 'raw_data' in flow and flow['raw_data']:
+                try:
+                    if isinstance(flow.get('raw_data'), str):
+                        raw_data = json.loads(flow.get('raw_data', '{}'))
+                    elif isinstance(flow.get('raw_data'), dict):
+                        raw_data = flow.get('raw_data')
+                    
+                    if raw_data and 'service' in raw_data:
+                        service = raw_data.get('service', {})
+                        port = service.get('port')
+                        proto = service.get('proto')
+                except:
+                    pass
+            # Ou chercher directement dans l'objet flow
+            else:
+                port = flow.get('port')
+                proto = flow.get('protocol')
+            
+            # Construire un nom de service à partir du port et du protocole si disponibles
+            if port and proto:
+                flow_data['service'] = f"{port}/{proto}"
+        
+        # Raccourcir les valeurs trop longues pour l'affichage
+        for key in ['rule_href', 'rule_name']:
+            if flow_data[key] != 'N/A' and len(str(flow_data[key])) > 18:
+                flow_data[key] = str(flow_data[key])[:15] + '...'
         
         # Assurer que toutes les valeurs sont des chaînes
         for key, value in flow_data.items():

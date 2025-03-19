@@ -184,15 +184,16 @@ def analyze_specific_flow(source_ip, dest_ip, protocol, port=None, perform_deep_
             if has_rules > 0:
                 print(f"  - {has_rules} flux avec règles identifiées ({(has_rules/len(results))*100:.1f}%)")
             
-            # Afficher les flux détaillés
+            # Afficher les flux détaillés dans un format identique à l'export CSV
             limit = min(20, len(results))  # Limiter à 20 résultats par défaut
-            print(f"\nDétail des {limit} premiers flux:")
+            print(f"\nDétail des {limit} premiers flux (format identique à l'export CSV):")
             FlowDisplayFormatter.format_flow_table(results, limit)
             
             # Proposer d'afficher plus de résultats si nécessaire
             if len(results) > limit:
                 show_more = input(f"\nAfficher les {len(results) - limit} flux supplémentaires? (o/n): ").lower()
                 if show_more in ('o', 'oui', 'y', 'yes'):
+                    print(f"\nFlux supplémentaires ({limit+1} à {len(results)}):")
                     FlowDisplayFormatter.format_flow_table(results[limit:], len(results) - limit)
         else:
             print("Aucun flux correspondant trouvé dans la période spécifiée.")
