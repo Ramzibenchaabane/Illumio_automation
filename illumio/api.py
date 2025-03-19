@@ -90,7 +90,19 @@ class IllumioAPI(IllumioAPICore):
     
     def create_async_traffic_query(self, query_data):
         """Crée une requête asynchrone pour analyser les flux de trafic."""
-        return self._make_request('post', 'traffic_flows/async_queries', data=query_data)
+        # CORRECTION: Afficher plus de détails sur la requête en cas d'erreur
+        try:
+            response = self._make_request('post', 'traffic_flows/async_queries', data=query_data)
+            if 'href' not in response:
+                print(f"AVERTISSEMENT: La réponse de l'API ne contient pas d'attribut 'href'")
+                print(f"Réponse complète: {response}")
+            return response
+        except Exception as e:
+            print(f"Erreur lors de la création de la requête de trafic asynchrone: {e}")
+            # Afficher une partie de la requête pour diagnostic
+            import json
+            print(f"Début de la requête envoyée: {json.dumps(query_data)[:200]}...")
+            raise
     
     def get_async_traffic_query_status(self, query_id):
         """Récupère le statut d'une requête asynchrone de trafic."""
@@ -98,4 +110,10 @@ class IllumioAPI(IllumioAPICore):
     
     def get_async_traffic_query_results(self, query_id):
         """Récupère les résultats d'une requête asynchrone de trafic."""
-        return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
+        try:
+            return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
+        except Exception as e:
+            print(f"Erreur lors de la récupération des résultats (ID: {query_id}): {e}")
+            # Essayer une autre approche si la première échoue
+            print("Tentative alternative...")
+            return self._make_request('get', f'traffic_flows/async_queries/{query_id}/result')

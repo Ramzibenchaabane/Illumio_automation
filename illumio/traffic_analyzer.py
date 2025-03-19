@@ -4,6 +4,7 @@ Module de gestion de l'analyse de trafic.
 """
 import time
 import sys
+import json
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Callable, List, Union
 from .api import IllumioAPI
@@ -29,7 +30,8 @@ class IllumioTrafficAnalyzer:
     
     def analyze(self, query_data=None, query_name=None, date_range=None, 
                 max_results=10000, polling_interval=5, max_attempts=60,
-                status_callback: Optional[Callable[[str, Dict[str, Any], Optional[IllumioDatabase]], None]] = None) -> Union[List[Dict[str, Any]], bool]:
+                status_callback: Optional[Callable[[str, Dict[str, Any], Optional[IllumioDatabase]], None]] = None,
+                debug=False) -> Union[List[Dict[str, Any]], bool]:
         """
         Exécute une analyse de trafic et stocke les résultats dans la base de données.
         
@@ -41,6 +43,7 @@ class IllumioTrafficAnalyzer:
             polling_interval (int): Intervalle en secondes entre les vérifications d'état
             max_attempts (int): Nombre maximal de tentatives de vérification
             status_callback (callable, optional): Fonction de rappel pour recevoir les mises à jour d'état
+            debug (bool): Si True, affiche plus d'informations de débogage
             
         Returns:
             list/bool: Liste des flux de trafic ou False si échec
@@ -88,6 +91,11 @@ class IllumioTrafficAnalyzer:
             
             print(f"\nSoumission de la requête de trafic '{query_data.get('query_name')}'...")
             
+            # Afficher la requête en mode debug
+            if debug:
+                print("\nDébug - Requête envoyée:")
+                print(json.dumps(query_data, indent=2))
+            
             # Stocker la requête dans la base de données avec un ID temporaire
             temp_id = "pending"
             if self.save_to_db:
@@ -95,6 +103,12 @@ class IllumioTrafficAnalyzer:
             
             # Soumettre la requête et obtenir l'ID
             query_id = traffic_op.submit(query_data)
+            
+            if not query_id:
+                print("❌ Échec de soumission de la requête.")
+                print("Vérifiez le format de votre requête et les journaux pour plus de détails.")
+                return False
+                
             print(f"✅ Requête soumise avec l'ID: {query_id}")
             
             # Mettre à jour l'ID dans la base de données
@@ -127,12 +141,17 @@ class IllumioTrafficAnalyzer:
             return False
         except APIRequestError as e:
             print(f"Erreur API: {e}")
+            if debug and query_data:
+                print("\nDébug - Requête qui a causé l'erreur:")
+                print(json.dumps(query_data, indent=2)[:1000]) # Afficher max 1000 caractères
             return False
         except TimeoutError as e:
             print(f"Erreur de délai d'attente: {e}")
             return False
         except Exception as e:
             print(f"Erreur inattendue: {e}")
+            import traceback
+            print(traceback.format_exc())
             return False
     
     def _on_status_update(self, status: str, response: Dict[str, Any], 
@@ -252,20 +271,60 @@ class IllumioTrafficAnalyzer:
             # Simplifier les données pour l'export
             simplified_flows = []
             for flow in flows:
-                simplified_flow = {
-                    'src_ip': flow.get('src_ip'),
-                    'src_workload_id': flow.get('src_workload_id'),
-                    'dst_ip': flow.get('dst_ip'),
-                    'dst_workload_id': flow.get('dst_workload_id'),
-                    'service': flow.get('service'),
-                    'port': flow.get('port'),
-                    'protocol': flow.get('protocol'),
-                    'policy_decision': flow.get('policy_decision'),
-                    'first_detected': flow.get('first_detected'),
-                    'last_detected': flow.get('last_detected'),
-                    'num_connections': flow.get('num_connections'),
-                    'flow_direction': flow.get('flow_direction')
-                }
+                # Si le flux est au format brut, extraire correctement les données
+                if isinstance(flow.get('raw_data'), str):
+                    try:
+                        raw_data = json.loads(flow.get('raw_data', '{}'))
+                        src = raw_data.get('src', {})
+                        dst = raw_data.get('dst', {})
+                        service = raw_data.get('service', {})
+                        simplified_flow = {
+                            'src_ip': src.get('ip'),
+                            'src_workload_id': src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None,
+                            'dst_ip': dst.get('ip'),
+                            'dst_workload_id': dst.get('workload', {}).get('href', '').split('/')[-1] if dst.get('workload', {}).get('href') else None,
+                            'service': service.get('name'),
+                            'port': service.get('port'),
+                            'protocol': service.get('proto'),
+                            'policy_decision': raw_data.get('policy_decision'),
+                            'first_detected': raw_data.get('timestamp_range', {}).get('first_detected'),
+                            'last_detected': raw_data.get('timestamp_range', {}).get('last_detected'),
+                            'num_connections': raw_data.get('num_connections'),
+                            'flow_direction': raw_data.get('flow_direction')
+                        }
+                    except json.JSONDecodeError:
+                        # Si le décodage JSON échoue, utiliser les données directement
+                        simplified_flow = {
+                            'src_ip': flow.get('src_ip'),
+                            'src_workload_id': flow.get('src_workload_id'),
+                            'dst_ip': flow.get('dst_ip'),
+                            'dst_workload_id': flow.get('dst_workload_id'),
+                            'service': flow.get('service'),
+                            'port': flow.get('port'),
+                            'protocol': flow.get('protocol'),
+                            'policy_decision': flow.get('policy_decision'),
+                            'first_detected': flow.get('first_detected'),
+                            'last_detected': flow.get('last_detected'),
+                            'num_connections': flow.get('num_connections'),
+                            'flow_direction': flow.get('flow_direction')
+                        }
+                else:
+                    # Si le flux n'est pas au format brut, utiliser directement les champs
+                    simplified_flow = {
+                        'src_ip': flow.get('src_ip'),
+                        'src_workload_id': flow.get('src_workload_id'),
+                        'dst_ip': flow.get('dst_ip'),
+                        'dst_workload_id': flow.get('dst_workload_id'),
+                        'service': flow.get('service'),
+                        'port': flow.get('port'),
+                        'protocol': flow.get('protocol'),
+                        'policy_decision': flow.get('policy_decision'),
+                        'first_detected': flow.get('first_detected'),
+                        'last_detected': flow.get('last_detected'),
+                        'num_connections': flow.get('num_connections'),
+                        'flow_direction': flow.get('flow_direction')
+                    }
+                
                 simplified_flows.append(simplified_flow)
             
             with open(filename, 'w') as f:
@@ -290,6 +349,7 @@ class IllumioTrafficAnalyzer:
             bool: True si l'export a réussi, False sinon
         """
         import csv
+        import json
         
         if not filename.endswith('.csv'):
             filename += '.csv'
@@ -307,9 +367,35 @@ class IllumioTrafficAnalyzer:
                 writer.writeheader()
                 
                 for flow in flows:
-                    # Ne garder que les champs définis dans fieldnames
-                    filtered_flow = {k: flow.get(k) for k in fieldnames if k in flow}
-                    writer.writerow(filtered_flow)
+                    # Si le flux est au format brut, extraire correctement les données
+                    if isinstance(flow.get('raw_data'), str):
+                        try:
+                            raw_data = json.loads(flow.get('raw_data', '{}'))
+                            src = raw_data.get('src', {})
+                            dst = raw_data.get('dst', {})
+                            service = raw_data.get('service', {})
+                            csv_flow = {
+                                'src_ip': src.get('ip'),
+                                'src_workload_id': src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None,
+                                'dst_ip': dst.get('ip'),
+                                'dst_workload_id': dst.get('workload', {}).get('href', '').split('/')[-1] if dst.get('workload', {}).get('href') else None,
+                                'service': service.get('name'),
+                                'port': service.get('port'),
+                                'protocol': service.get('proto'),
+                                'policy_decision': raw_data.get('policy_decision'),
+                                'first_detected': raw_data.get('timestamp_range', {}).get('first_detected'),
+                                'last_detected': raw_data.get('timestamp_range', {}).get('last_detected'),
+                                'num_connections': raw_data.get('num_connections'),
+                                'flow_direction': raw_data.get('flow_direction')
+                            }
+                        except json.JSONDecodeError:
+                            # Si le décodage JSON échoue, utiliser les données directement
+                            csv_flow = {k: flow.get(k) for k in fieldnames if k in flow}
+                    else:
+                        # Si le flux n'est pas au format brut, utiliser directement les champs
+                        csv_flow = {k: flow.get(k) for k in fieldnames if k in flow}
+                    
+                    writer.writerow(csv_flow)
             
             print(f"✅ Export CSV terminé. Fichier sauvegardé: {filename}")
             return True

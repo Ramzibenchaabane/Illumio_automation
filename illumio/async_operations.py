@@ -1,5 +1,4 @@
-#illumio/async_operations.py
-#!/usr/bin/env python3
+# illumio/async_operations.py
 """
 Module de gestion des opérations asynchrones pour l'API Illumio.
 Centralise la logique de soumission, surveillance et récupération des résultats des opérations asynchrones.
@@ -225,7 +224,23 @@ class TrafficAnalysisOperation(AsyncOperation):
             ID de la requête asynchrone
         """
         response = self.api.create_async_traffic_query(data)
-        return response.get('id')
+        
+        # CORRECTION: Extraire l'ID depuis l'URL dans le champ href
+        # Format typique: "/api/v2/orgs/1/traffic_flows/async_queries/123456"
+        href = response.get('href', '')
+        if not href:
+            print("Erreur: Aucun attribut 'href' dans la réponse de l'API")
+            print(f"Réponse complète: {response}")
+            return None
+            
+        # Extraire l'ID à la fin de l'URL
+        query_id = href.split('/')[-1]
+        if not query_id:
+            print(f"Erreur: Impossible d'extraire l'ID depuis l'URL: {href}")
+            return None
+            
+        print(f"Requête asynchrone créée avec l'ID: {query_id}")
+        return query_id
     
     def get_status(self, operation_id: str) -> Dict[str, Any]:
         """
@@ -319,13 +334,13 @@ class TrafficAnalysisOperation(AsyncOperation):
             "sources_destinations_query_op": "and",
             "sources": {
                 "include": [
-                    {"actors": "ams"}  # All Managed Systems
+                    [{"actors": "ams"}]  # All Managed Systems - CORRIGÉ: tableau imbriqué
                 ],
                 "exclude": []
             },
             "destinations": {
                 "include": [
-                    {"actors": "ams"}  # All Managed Systems
+                    [{"actors": "ams"}]  # All Managed Systems - CORRIGÉ: tableau imbriqué
                 ],
                 "exclude": []
             },
