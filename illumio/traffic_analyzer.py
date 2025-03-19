@@ -28,8 +28,6 @@ class IllumioTrafficAnalyzer:
             self.db = db
             self.save_to_db = bool(db)  # Si db est None, save_to_db sera False
     
-# Voici la méthode corrigée dans la classe IllumioTrafficAnalyzer
-
     def analyze(self, query_data=None, query_name=None, date_range=None, 
                 max_results=10000, polling_interval=5, max_attempts=60,
                 status_callback: Optional[Callable[[str, Dict[str, Any], Optional[IllumioDatabase]], None]] = None,
@@ -111,7 +109,7 @@ class IllumioTrafficAnalyzer:
                 print("❌ Échec de soumission de la requête.")
                 print("Vérifiez le format de votre requête et les journaux pour plus de détails.")
                 return False
-                    
+                
             print(f"✅ Requête soumise avec l'ID: {query_id}")
             
             # Mettre à jour l'ID dans la base de données
@@ -177,7 +175,7 @@ class IllumioTrafficAnalyzer:
             import traceback
             print(traceback.format_exc())
             return False
-
+    
     def _perform_deep_rule_analysis(self, query_id: str, polling_interval: int = 5, max_attempts: int = 60) -> Union[List[Dict[str, Any]], None]:
         """
         Effectue une analyse de règles approfondie après une requête de trafic asynchrone.
@@ -197,26 +195,23 @@ class IllumioTrafficAnalyzer:
                 print("❌ La requête de trafic initiale n'est pas encore terminée. Impossible de lancer l'analyse de règles.")
                 return None
             
-            # Appel pour lancer l'analyse de règles approfondie
+            # Étape 1: Lancer l'analyse de règles approfondie avec un appel PUT
             print("Démarrage de l'analyse de règles approfondie...")
-            update_rules_response = self.api._make_request(
-                'put', 
-                f'traffic_flows/async_queries/{query_id}/update_rules',
-                params={'label_based_rules': 'false', 'offset': 0, 'limit': 100}
-            )
+            params = {'label_based_rules': 'false', 'offset': 0, 'limit': 100}
             
-            # Vérifier si la requête a été acceptée (code 202)
-            if not update_rules_response:
-                print("❌ La requête d'analyse de règles approfondie a été rejetée.")
+            try:
+                # L'appel PUT retournera un code 202 sans contenu
+                self.api._make_request('put', f'traffic_flows/async_queries/{query_id}/update_rules', params=params)
+                print("✅ Requête d'analyse de règles approfondie acceptée.")
+            except Exception as e:
+                print(f"❌ Erreur lors du lancement de l'analyse de règles approfondie: {e}")
                 return None
-            
-            print("✅ Requête d'analyse de règles approfondie acceptée.")
             
             # Mettre à jour le statut dans la base de données
             if self.save_to_db:
                 self.db.update_traffic_query_rules_status(query_id, 'working')
             
-            # Surveiller l'état de l'analyse de règles
+            # Étape 2: Surveiller l'état de l'analyse de règles via des appels GET répétés
             print("Surveillance de l'état de l'analyse de règles...")
             
             attempts = 0
@@ -226,10 +221,11 @@ class IllumioTrafficAnalyzer:
                 # Vérifier l'état actuel de la requête
                 status_response = self.api._make_request('get', f'traffic_flows/async_queries/{query_id}')
                 
-                # Récupérer l'état des règles
+                # Vérifier si l'attribut 'rules' est présent dans la réponse
                 if 'rules' in status_response:
+                    # Récupérer le statut de l'analyse des règles
                     rules_status = status_response.get('rules', {}).get('status')
-                
+                    
                     if rules_status:
                         print(f"  État de l'analyse de règles: {rules_status} (tentative {attempts+1}/{max_attempts})")
                         
@@ -239,7 +235,7 @@ class IllumioTrafficAnalyzer:
                         
                         # Vérifier si l'analyse est terminée
                         if rules_status == 'completed':
-                            print("Analyse de règles terminée avec succès, récupération des résultats...")
+                            print("Analyse de règles terminée avec succès.")
                             break
                     else:
                         print(f"  État de l'analyse de règles non disponible... (tentative {attempts+1}/{max_attempts})")
@@ -255,15 +251,21 @@ class IllumioTrafficAnalyzer:
                 print(f"❌ L'analyse de règles n'a pas été complétée après {max_attempts} tentatives.")
                 return None
             
-            # Récupérer les résultats finaux avec les règles
+            # Étape 3: Une fois que rules.status est "completed", récupérer les résultats finaux
             print("Récupération des résultats de l'analyse de règles...")
-            final_results = self.api._make_request(
-                'get', 
-                f'traffic_flows/async_queries/{query_id}/download',
-                params={'offset': 0, 'limit': 5000}
-            )
+            download_params = {'offset': 0, 'limit': 5000}
             
-            return final_results
+            try:
+                final_results = self.api._make_request(
+                    'get', 
+                    f'traffic_flows/async_queries/{query_id}/download',
+                    params=download_params
+                )
+                print(f"✅ {len(final_results)} résultats récupérés avec analyse de règles.")
+                return final_results
+            except Exception as e:
+                print(f"❌ Erreur lors de la récupération des résultats finaux: {e}")
+                return None
                 
         except APIRequestError as e:
             print(f"Erreur API lors de l'analyse de règles: {e}")
@@ -428,7 +430,8 @@ class IllumioTrafficAnalyzer:
                             'last_detected': flow.get('last_detected'),
                             'num_connections': flow.get('num_connections'),
                             'flow_direction': flow.get('flow_direction'),
-                            'rules': flow.get('rules')  # Ajout des règles issues de l'analyse approfondie
+                            'rule_href': flow.get('rule_href'),
+                            'rule_name': flow.get('rule_name')
                         }
                 else:
                     # Si le flux n'est pas au format brut, utiliser directement les champs
@@ -445,7 +448,8 @@ class IllumioTrafficAnalyzer:
                         'last_detected': flow.get('last_detected'),
                         'num_connections': flow.get('num_connections'),
                         'flow_direction': flow.get('flow_direction'),
-                        'rules': flow.get('rules')  # Ajout des règles issues de l'analyse approfondie
+                        'rule_href': flow.get('rule_href'),
+                        'rule_name': flow.get('rule_name')
                     }
                 
                 simplified_flows.append(simplified_flow)

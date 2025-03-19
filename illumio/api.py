@@ -140,13 +140,16 @@ class IllumioAPI(IllumioAPICore):
             }
             
             # Faire la requête PUT pour lancer l'analyse de règles
-            response = self._make_request('put', f'traffic_flows/async_queries/{query_id}/update_rules', params=params)
-            
-            # Si la réponse est vide mais le code est 202 (Accepted), c'est un succès
-            if response is True:
-                return True
+            # Cette requête retourne un code 202 sans contenu, donc nous traitons cela comme un succès
+            try:
+                self._make_request('put', f'traffic_flows/async_queries/{query_id}/update_rules', params=params)
+                return True  # Si aucune exception n'est levée, considérer que la requête a été acceptée
+            except Exception as e:
+                # Vérifier si l'exception est due à un "succès sans contenu" (code 202)
+                if hasattr(e, 'status_code') and e.status_code == 202:
+                    return True
+                raise  # Relever l'exception si ce n'est pas un code 202
                 
-            return bool(response)
         except Exception as e:
             print(f"Erreur lors du lancement de l'analyse de règles approfondie: {e}")
             return False

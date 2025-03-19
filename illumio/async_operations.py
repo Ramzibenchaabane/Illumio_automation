@@ -391,3 +391,27 @@ class TrafficAnalysisOperation(AsyncOperation):
             offset=offset,
             limit=limit
         )
+    
+    def monitor_deep_rule_analysis(self, operation_id: str) -> Dict[str, Any]:
+        """
+        Surveille l'état d'une analyse de règles approfondie.
+        
+        Args:
+            operation_id: Identifiant de l'opération
+            
+        Returns:
+            Statut actuel de l'analyse de règles
+        """
+        # Cette méthode utilise la même API que pour vérifier l'état de la requête initiale
+        status_response = self.get_status(operation_id)
+        
+        # Extraire spécifiquement les informations sur l'analyse de règles
+        rules_info = status_response.get('rules', {})
+        rules_status = rules_info.get('status', 'unknown')
+        
+        return {
+            'operation_id': operation_id,
+            'rules_status': rules_status,
+            'rules_info': rules_info,
+            'full_response': status_response
+        }
