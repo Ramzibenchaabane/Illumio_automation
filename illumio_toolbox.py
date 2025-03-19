@@ -1,12 +1,49 @@
-# main.py
+# illumio_toolbox.py
+# Point d'entrée principal pour l'application d'automatisation Illumio.
 #!/usr/bin/env python3
 """
 Point d'entrée principal pour l'application d'automatisation Illumio.
 """
 import sys
+import os
 from cli_modules.menu_utils import print_header, print_menu, get_user_choice
 from cli_modules.sync_menu import sync_database_menu
 from cli_modules.traffic_menu import traffic_analysis_menu
+
+def check_dependencies():
+    """Vérifie si les dépendances nécessaires sont installées."""
+    missing_deps = []
+    
+    # Vérification des dépendances
+    try:
+        import requests
+    except ImportError:
+        missing_deps.append("requests")
+    
+    try:
+        import configparser
+    except ImportError:
+        missing_deps.append("configparser")
+    
+    try:
+        import pandas
+    except ImportError:
+        missing_deps.append("pandas")
+    
+    try:
+        import openpyxl
+    except ImportError:
+        missing_deps.append("openpyxl")
+    
+    if missing_deps:
+        print("Dépendances manquantes:")
+        for dep in missing_deps:
+            print(f"  - {dep}")
+        print("\nVeuillez installer les dépendances manquantes avec:")
+        print(f"pip install {' '.join(missing_deps)}")
+        return False
+    
+    return True
 
 def main_menu():
     """Affiche le menu principal de l'application."""
@@ -83,9 +120,28 @@ def show_statistics():
     
     input("\nAppuyez sur Entrée pour revenir au menu principal...")
 
+def show_version():
+    """Affiche la version de l'application."""
+    print("\nIllumio Automation Tool v1.1")
+    print("© 2025 - Tous droits réservés")
+    print("\nAmélioration des fonctionnalités d'analyse de trafic:")
+    print("- Analyse manuelle (source/destination/service)")
+    print("- Import de fichiers Excel")
+
 def main():
     """Fonction principale."""
     try:
+        # Vérifier les dépendances
+        if not check_dependencies():
+            return 1
+        
+        # Afficher la version
+        show_version()
+        
+        # Vérifier l'existence du répertoire de données
+        os.makedirs('data', exist_ok=True)
+        
+        # Lancer le menu principal
         return main_menu()
     except KeyboardInterrupt:
         print("\n\nOpération interrompue. Au revoir!")
