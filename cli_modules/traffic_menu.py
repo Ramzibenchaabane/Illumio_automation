@@ -275,13 +275,18 @@ def display_traffic_flows(flows, limit=20):
             print(f"\n... et {len(flows) - limit} autres flux.")
             break
         
-        src_ip = flow.get('src_ip') or 'N/A'
-        dst_ip = flow.get('dst_ip') or 'N/A'
-        service = flow.get('service') or 'N/A'
-        port = flow.get('port') or 'N/A'
+        # Extraire les informations correctement selon la structure
+        src = flow.get('src', {})
+        dst = flow.get('dst', {})
+        service = flow.get('service', {})
+        
+        src_ip = src.get('ip') or 'N/A'
+        dst_ip = dst.get('ip') or 'N/A'
+        service_name = service.get('name') or 'N/A'
+        port = service.get('port') or 'N/A'
         decision = flow.get('policy_decision') or 'N/A'
         
-        print(f"{src_ip:<15} {dst_ip:<15} {service:<20} {port:<8} {decision:<15}")
+        print(f"{src_ip:<15} {dst_ip:<15} {service_name:<20} {port:<8} {decision:<15}")
 
 def export_traffic_analysis():
     """Exporte les résultats d'une analyse de trafic."""
@@ -367,6 +372,7 @@ def analyze_specific_flow(source_ip, dest_ip, protocol, port=None):
         query_name += f"_port{port}"
     
     # Créer une requête d'analyse personnalisée
+    # CORRECTION: Formater correctement selon le schéma API Illumio
     query_data = {
         "query_name": query_name,
         "start_date": (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
@@ -374,13 +380,13 @@ def analyze_specific_flow(source_ip, dest_ip, protocol, port=None):
         "sources_destinations_query_op": "and",
         "sources": {
             "include": [
-                {"ip_address": source_ip}
+                [{"ip_address": source_ip}]  # Tableaux imbriqués comme requis par le schéma
             ],
             "exclude": []
         },
         "destinations": {
             "include": [
-                {"ip_address": dest_ip}
+                [{"ip_address": dest_ip}]  # Tableaux imbriqués comme requis par le schéma
             ],
             "exclude": []
         },
@@ -494,7 +500,7 @@ def analyze_excel_flows(file_path):
         query_name = f"Excel_Flows_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         # Structurer la requête pour inclure tous les flux
-        # Nous devons organiser les données pour l'API Illumio
+        # CORRECTION: Formater correctement selon le schéma API Illumio
         sources_include = []
         destinations_include = []
         services_include = []
@@ -503,11 +509,12 @@ def analyze_excel_flows(file_path):
         unique_sources = set(flow['source'] for flow in flows)
         unique_destinations = set(flow['destination'] for flow in flows)
         
+        # Format correct pour l'API: tableaux imbriqués pour sources/destinations
         for source in unique_sources:
-            sources_include.append({"ip_address": source})
+            sources_include.append([{"ip_address": source}])
         
         for destination in unique_destinations:
-            destinations_include.append({"ip_address": destination})
+            destinations_include.append([{"ip_address": destination}])
         
         # Organiser les services uniques (protocole/port)
         for flow in flows:
