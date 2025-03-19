@@ -33,8 +33,6 @@ class IllumioAPI(IllumioAPICore):
         else:
             endpoint = resource_type
         
-        print(f"Récupération des {resource_type} (mode asynchrone)...")
-        
         # Faire la requête asynchrone
         return self._make_async_request('get', endpoint, params=params)
     
@@ -86,7 +84,6 @@ class IllumioAPI(IllumioAPICore):
     
     def get_traffic_flows(self, params=None):
         """Récupère les flux de trafic avec filtres optionnels."""
-        print("Récupération des flux de trafic...")
         return self._make_request('get', 'traffic_flows', params=params)
     
     # Méthodes d'API pour les opérations asynchrones d'analyse de trafic
@@ -101,5 +98,4 @@ class IllumioAPI(IllumioAPICore):
     
     def get_async_traffic_query_results(self, query_id):
         """Récupère les résultats d'une requête asynchrone de trafic."""
-        print("Récupération des résultats d'analyse de trafic...")
         return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')

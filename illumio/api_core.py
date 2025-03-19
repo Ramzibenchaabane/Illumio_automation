@@ -79,7 +79,7 @@ class IllumioAPICore:
     
     def _make_async_request(self, method, endpoint, data=None, params=None, polling_interval=5, max_attempts=60):
         """
-        Effectue une requête asynchrone générique.
+        Effectue une requête asynchrone.
         
         Args:
             method (str): Méthode HTTP (GET, POST, etc.)
@@ -102,8 +102,6 @@ class IllumioAPICore:
         # Ajouter les paramètres spécifiques pour une requête asynchrone
         async_params = params.copy()
         async_params['async'] = 'true'  # Indiquer que nous voulons une opération asynchrone
-        
-        print(f"Démarrage d'une requête asynchrone pour l'endpoint {endpoint}...")
         
         # Soumission de la requête asynchrone
         response = self._make_request(method, endpoint, data, async_params)
