@@ -119,7 +119,7 @@ def main():
     parser.add_argument('-f', '--file', help='Fichier JSON contenant la requête de trafic')
     parser.add_argument('-o', '--output', help='Fichier de sortie pour les résultats (JSON)')
     parser.add_argument('-d', '--days', type=int, default=7, help='Nombre de jours à analyser (par défaut: 7)')
-    parser.add_argument('-m', '--max', type=int, default=1000, help='Nombre maximum de résultats (par défaut: 1000)')
+    parser.add_argument('-m', '--max', type=int, default=10000, help='Nombre maximum de résultats (par défaut: 10000)')
     parser.add_argument('--no-db', action='store_true', help="Ne pas stocker les résultats dans la base de données")
     
     args = parser.parse_args()

@@ -146,7 +146,7 @@ class IllumioAPI:
     def test_connection(self):
         """Teste la connexion au PCE Illumio."""
         try:
-            self._make_request('get', 'labels', params={'limit': 1})
+            self._make_request('get', 'labels', params={'max_results': 1})
             return True, "Connexion réussie"
         except AuthenticationError as e:
             return False, str(e)
@@ -158,6 +158,9 @@ class IllumioAPI:
     def get_workloads(self, params=None):
         """Récupère la liste des workloads avec filtres optionnels."""
         print("Récupération des workloads (mode asynchrone)...")
+        if params is None:
+            params = {}
+        params['max_results'] = 10000
         return self._make_async_request('get', 'workloads', params=params)
     
     def get_workload(self, workload_id):
@@ -167,7 +170,8 @@ class IllumioAPI:
     def get_labels(self):
         """Récupère la liste des labels."""
         print("Récupération des labels (mode asynchrone)...")
-        return self._make_async_request('get', 'labels')
+        params = {'max_results': 10000}
+        return self._make_async_request('get', 'labels', params=params)
     
     def get_ip_lists(self, pversion='draft', params=None):
         """Récupère la liste des IP lists.
@@ -178,6 +182,7 @@ class IllumioAPI:
         """
         if params is None:
             params = {}
+        params['max_results'] = 10000
         
         print("Récupération des listes d'IPs (mode asynchrone)...")
         endpoint = f"sec_policy/{pversion}/ip_lists"
@@ -192,6 +197,7 @@ class IllumioAPI:
         """
         if params is None:
             params = {}
+        params['max_results'] = 10000
         
         print("Récupération des services (mode asynchrone)...")
         endpoint = f"sec_policy/{pversion}/services"
@@ -206,6 +212,7 @@ class IllumioAPI:
         """
         if params is None:
             params = {}
+        params['max_results'] = 10000
         
         print("Récupération des groupes de labels (mode asynchrone)...")
         endpoint = f"sec_policy/{pversion}/label_groups"
@@ -234,4 +241,3 @@ class IllumioAPI:
         """Récupère les résultats d'une requête asynchrone de trafic."""
         print("Récupération des résultats d'analyse de trafic...")
         return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
-    

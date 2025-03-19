@@ -290,7 +290,7 @@ class TrafficAnalysisOperation(AsyncOperation):
     def create_default_query(self, query_name: str, 
                            start_date: Optional[str] = None, 
                            end_date: Optional[str] = None,
-                           max_results: int = 1000) -> Dict[str, Any]:
+                           max_results: int = 10000) -> Dict[str, Any]:
         """
         Crée une requête de trafic par défaut.
         

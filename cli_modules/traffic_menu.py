@@ -49,7 +49,7 @@ def create_traffic_analysis():
     print("\nCréation d'une nouvelle analyse de trafic:")
     query_name = input("Nom de la requête (laisser vide pour un nom automatique): ")
     days = input("Nombre de jours à analyser (défaut: 7): ")
-    max_results = input("Nombre maximum de résultats (défaut: 1000): ")
+    max_results = input("Nombre maximum de résultats (défaut: 10000): ")
     
     # Utiliser les valeurs par défaut si non spécifiées
     if not query_name:
@@ -64,13 +64,13 @@ def create_traffic_analysis():
             days = 7
     
     if not max_results:
-        max_results = 1000
+        max_results = 10000
     else:
         try:
             max_results = int(max_results)
         except ValueError:
-            print("Valeur invalide, utilisation de la valeur par défaut (1000).")
-            max_results = 1000
+            print("Valeur invalide, utilisation de la valeur par défaut (10000).")
+            max_results = 10000
     
     print("\nDémarrage de l'analyse de trafic...")
     start_time = time.time()
