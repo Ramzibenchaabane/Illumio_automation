@@ -223,7 +223,7 @@ class IllumioTrafficAnalyzer:
                 
                 # Vérifier si l'attribut 'rules' est présent dans la réponse
                 if 'rules' in status_response:
-                    # Vérifier si rules est un dictionnaire
+                    # Vérifier le type de l'attribut rules (peut être une chaîne ou un objet)
                     rules = status_response.get('rules')
                     
                     if isinstance(rules, dict) and 'status' in rules:
@@ -241,7 +241,7 @@ class IllumioTrafficAnalyzer:
                             print("Analyse de règles terminée avec succès.")
                             break
                     elif isinstance(rules, str):
-                        # Si rules est une chaîne, utiliser directement cette valeur comme status
+                        # CORRECTION: Si rules est une chaîne, utiliser directement cette valeur comme status
                         rules_status = rules
                         print(f"  État de l'analyse de règles: {rules_status} (tentative {attempts+1}/{max_attempts})")
                         
@@ -416,6 +416,25 @@ class IllumioTrafficAnalyzer:
                         src = raw_data.get('src', {})
                         dst = raw_data.get('dst', {})
                         service = raw_data.get('service', {})
+                        rules = raw_data.get('rules')
+                        
+                        # CORRECTION: Gestion des deux formats de règles possibles
+                        rule_info = {}
+                        if isinstance(rules, dict) and 'sec_policy' in rules:
+                            # Ancien format (avant update_rules)
+                            sec_policy = rules.get('sec_policy', {})
+                            rule_info = {
+                                'rule_href': sec_policy.get('href'),
+                                'rule_name': sec_policy.get('name')
+                            }
+                        elif isinstance(rules, list) and len(rules) > 0:
+                            # Nouveau format (après update_rules)
+                            rule = rules[0]  # Prendre la première règle
+                            rule_info = {
+                                'rule_href': rule.get('href'),
+                                'rule_name': rule.get('href', '').split('/')[-1]  # Utiliser l'ID de règle comme nom temporaire
+                            }
+                        
                         simplified_flow = {
                             'src_ip': src.get('ip'),
                             'src_workload_id': src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None,
@@ -429,7 +448,9 @@ class IllumioTrafficAnalyzer:
                             'last_detected': raw_data.get('timestamp_range', {}).get('last_detected'),
                             'num_connections': raw_data.get('num_connections'),
                             'flow_direction': raw_data.get('flow_direction'),
-                            'rules': raw_data.get('rules')  # Ajout des règles issues de l'analyse approfondie
+                            'rules': rules,  # Inclure les règles complètes
+                            'rule_href': rule_info.get('rule_href'),
+                            'rule_name': rule_info.get('rule_name')
                         }
                     except json.JSONDecodeError:
                         # Si le décodage JSON échoue, utiliser les données directement
@@ -518,16 +539,23 @@ class IllumioTrafficAnalyzer:
                             src = raw_data.get('src', {})
                             dst = raw_data.get('dst', {})
                             service = raw_data.get('service', {})
-                            rules = raw_data.get('rules', {})
+                            rules = raw_data.get('rules')
                             
-                            # Extraire les informations de règles
+                            # CORRECTION: Gestion des deux formats de règles possibles
                             rule_href = None
                             rule_name = None
-                            if rules and 'sec_policy' in rules:
+                            
+                            if isinstance(rules, dict) and 'sec_policy' in rules:
+                                # Ancien format (avant update_rules)
                                 sec_policy = rules.get('sec_policy', {})
                                 if sec_policy:
                                     rule_href = sec_policy.get('href')
                                     rule_name = sec_policy.get('name')
+                            elif isinstance(rules, list) and len(rules) > 0:
+                                # Nouveau format (après update_rules)
+                                rule = rules[0]  # Prendre la première règle
+                                rule_href = rule.get('href')
+                                rule_name = rule.get('href', '').split('/')[-1]  # Utiliser l'ID de règle comme nom temporaire
                             
                             csv_flow = {
                                 'src_ip': src.get('ip'),

@@ -300,28 +300,131 @@ def display_traffic_flows(flows, limit=20):
             print(f"\n... et {len(flows) - limit} autres flux.")
             break
         
-        # Extraire les informations correctement selon la structure
-        src = flow.get('src', {})
-        dst = flow.get('dst', {})
-        service = flow.get('service', {})
+        # Si les données sont stockées dans raw_data (format JSON), les extraire
+        if isinstance(flow.get('raw_data'), str):
+            try:
+                import json
+                raw_data = json.loads(flow.get('raw_data', '{}'))
+                src = raw_data.get('src', {})
+                dst = raw_data.get('dst', {})
+                service = raw_data.get('service', {})
+                rules = raw_data.get('rules')
+                
+                src_ip = src.get('ip') or 'N/A'
+                dst_ip = dst.get('ip') or 'N/A'
+                service_name = service.get('name') or str(service.get('port')) + '/' + str(service.get('proto')) or 'N/A'
+                port = service.get('port') or 'N/A'
+                decision = raw_data.get('policy_decision') or 'N/A'
+                
+                # CORRECTION: Gérer les deux formats de règles
+                rule_name = 'N/A'
+                if isinstance(rules, dict) and 'sec_policy' in rules:
+                    # Ancien format (avant update_rules)
+                    sec_policy = rules.get('sec_policy', {})
+                    if sec_policy and 'name' in sec_policy:
+                        rule_name = sec_policy.get('name')
+                elif isinstance(rules, list) and len(rules) > 0:
+                    # Nouveau format (après update_rules)
+                    rule = rules[0]
+                    rule_href = rule.get('href', 'N/A')
+                    # Utiliser l'ID de la règle depuis l'URL href
+                    rule_name = rule_href.split('/')[-1] if rule_href != 'N/A' else 'N/A'
+            except:
+                # Si l'extraction échoue, utiliser les données directes
+                src_ip = flow.get('src_ip') or 'N/A'
+                dst_ip = flow.get('dst_ip') or 'N/A'
+                service_name = flow.get('service') or 'N/A'
+                port = flow.get('port') or 'N/A'
+                decision = flow.get('policy_decision') or 'N/A'
+                rule_name = flow.get('rule_name') or 'N/A'
+        else:
+            # Si pas de raw_data, utiliser directement les champs de flow
+            src_ip = flow.get('src_ip') or 'N/A'
+            dst_ip = flow.get('dst_ip') or 'N/A'
+            service_name = flow.get('service') or 'N/A'
+            port = flow.get('port') or 'N/A'
+            decision = flow.get('policy_decision') or 'N/A'
+            rule_name = flow.get('rule_name') or 'N/A'
         
-        src_ip = src.get('ip') or 'N/A'
-        dst_ip = dst.get('ip') or 'N/A'
-        service_name = service.get('name') or 'N/A'
-        port = service.get('port') or 'N/A'
-        decision = flow.get('policy_decision') or 'N/A'
-        
-        # Extraire les informations de règles si disponibles
-        rule_name = 'N/A'
-        rules = flow.get('rules', {})
-        if rules and 'sec_policy' in rules:
-            sec_policy = rules.get('sec_policy', {})
-            if sec_policy and 'name' in sec_policy:
-                rule_name = sec_policy.get('name')
-                if len(rule_name) > 18:
-                    rule_name = rule_name[:15] + '...'
-        
+        # Limiter la longueur de rule_name pour l'affichage
+        if len(str(rule_name)) > 18:
+            rule_name = str(rule_name)[:15] + '...'
+            
         print(f"{src_ip:<15} {dst_ip:<15} {service_name:<20} {port:<8} {decision:<15} {rule_name:<20}")
+
+def export_traffic_analysis():
+    """Exporte les résultats d'une analyse de trafic."""
+    print("\nRécupération des analyses de trafic...")
+    
+    try:
+        # Initialiser l'analyseur de trafic
+        analyzer = IllumioTrafficAnalyzer()
+        
+        # Récupérer les requêtes
+        queries = analyzer.get_queries()
+        
+        if not queries:
+            print("Aucune analyse de trafic trouvée.")
+            return
+        
+        print(f"\n{len(queries)} analyses trouvées:\n")
+        print("-" * 90)
+        print(f"{'ID':<8} {'NOM':<30} {'STATUT':<15} {'ANALYSE RÈGLES':<15} {'DATE':<20}")
+        print("-" * 90)
+        
+        for query in queries:
+            query_id = query.get('id')
+            name = query.get('query_name')
+            status = query.get('status')
+            rules_status = query.get('rules_status', 'N/A')
+            created_at = query.get('created_at')
+            
+            # Limiter la longueur du nom pour l'affichage
+            if name and len(name) > 28:
+                name = name[:25] + "..."
+            
+            print(f"{query_id:<8} {name:<30} {status:<15} {rules_status:<15} {created_at:<20}")
+        
+        print("-" * 90)
+        
+        # Demander l'ID de l'analyse à exporter
+        query_id = input("\nEntrez l'ID de l'analyse à exporter (ou appuyez sur Entrée pour revenir): ")
+        
+        if not query_id:
+            return
+        
+        # Vérifier que l'analyse existe
+        flows = analyzer.get_flows(query_id)
+        if not flows:
+            print(f"Aucun flux trouvé pour l'analyse {query_id}.")
+            return
+        
+        # Demander le format d'export
+        print("\nFormats d'export disponibles:")
+        print("1. CSV")
+        print("2. JSON")
+        
+        format_choice = get_user_choice(2)
+        
+        if format_choice == 0:
+            return
+        
+        # Demander le chemin du fichier
+        default_filename = f"traffic_analysis_{query_id}_{datetime.now().strftime('%Y%m%d')}"
+        filename = input(f"\nNom du fichier (défaut: {default_filename}): ")
+        
+        if not filename:
+            filename = default_filename
+        
+        # Exporter selon le format choisi
+        format_type = 'csv' if format_choice == 1 else 'json'
+        success = analyzer.export_flows(query_id, format_type=format_type, output_file=filename)
+        
+        if not success:
+            print("❌ Erreur lors de l'export.")
+    
+    except Exception as e:
+        print(f"Erreur lors de l'export: {e}")
 
 def launch_deep_rule_analysis():
     """Lance une analyse de règles approfondie sur une requête de trafic existante."""
@@ -409,80 +512,6 @@ def launch_deep_rule_analysis():
     
     except Exception as e:
         print(f"Erreur lors de la récupération des analyses: {e}")
-
-def export_traffic_analysis():
-    """Exporte les résultats d'une analyse de trafic."""
-    print("\nRécupération des analyses de trafic...")
-    
-    try:
-        # Initialiser l'analyseur de trafic
-        analyzer = IllumioTrafficAnalyzer()
-        
-        # Récupérer les requêtes
-        queries = analyzer.get_queries()
-        
-        if not queries:
-            print("Aucune analyse de trafic trouvée.")
-            return
-        
-        print(f"\n{len(queries)} analyses trouvées:\n")
-        print("-" * 90)
-        print(f"{'ID':<8} {'NOM':<30} {'STATUT':<15} {'ANALYSE RÈGLES':<15} {'DATE':<20}")
-        print("-" * 90)
-        
-        for query in queries:
-            query_id = query.get('id')
-            name = query.get('query_name')
-            status = query.get('status')
-            rules_status = query.get('rules_status', 'N/A')
-            created_at = query.get('created_at')
-            
-            # Limiter la longueur du nom pour l'affichage
-            if name and len(name) > 28:
-                name = name[:25] + "..."
-            
-            print(f"{query_id:<8} {name:<30} {status:<15} {rules_status:<15} {created_at:<20}")
-        
-        print("-" * 90)
-        
-        # Demander l'ID de l'analyse à exporter
-        query_id = input("\nEntrez l'ID de l'analyse à exporter (ou appuyez sur Entrée pour revenir): ")
-        
-        if not query_id:
-            return
-        
-        # Vérifier que l'analyse existe
-        flows = analyzer.get_flows(query_id)
-        if not flows:
-            print(f"Aucun flux trouvé pour l'analyse {query_id}.")
-            return
-        
-        # Demander le format d'export
-        print("\nFormats d'export disponibles:")
-        print("1. CSV")
-        print("2. JSON")
-        
-        format_choice = get_user_choice(2)
-        
-        if format_choice == 0:
-            return
-        
-        # Demander le chemin du fichier
-        default_filename = f"traffic_analysis_{query_id}_{datetime.now().strftime('%Y%m%d')}"
-        filename = input(f"\nNom du fichier (défaut: {default_filename}): ")
-        
-        if not filename:
-            filename = default_filename
-        
-        # Exporter selon le format choisi
-        format_type = 'csv' if format_choice == 1 else 'json'
-        success = analyzer.export_flows(query_id, format_type=format_type, output_file=filename)
-        
-        if not success:
-            print("❌ Erreur lors de l'export.")
-    
-    except Exception as e:
-        print(f"Erreur lors de l'export: {e}")
 
 def analyze_specific_flow(source_ip, dest_ip, protocol, port=None, perform_deep_analysis=False):
     """Analyse un flux spécifique entre source et destination."""

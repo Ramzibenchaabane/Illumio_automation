@@ -659,12 +659,21 @@ class IllumioDatabase:
                     rule_name = None
                     rule_sec_policy = None
                     
-                    if rules and 'sec_policy' in rules:
+                    # CORRECTION: Gérer les deux formats de rules (dict avec sec_policy ou liste de règles)
+                    if isinstance(rules, dict) and 'sec_policy' in rules:
+                        # Ancien format (avant update_rules)
                         sec_policy = rules.get('sec_policy', {})
                         if sec_policy:
                             rule_href = sec_policy.get('href')
                             rule_name = sec_policy.get('name')
                             rule_sec_policy = json.dumps(sec_policy)
+                    elif isinstance(rules, list) and len(rules) > 0:
+                        # Nouveau format (après update_rules) - liste d'objets rule
+                        rule = rules[0]  # Prendre la première règle
+                        rule_href = rule.get('href')
+                        # Note: Le nom de la règle n'est pas disponible dans ce format
+                        # On pourrait faire une requête supplémentaire à l'API pour l'obtenir
+                        rule_sec_policy = json.dumps(rule)
                     
                     # Extraire les IDs des workloads s'ils existent
                     src_workload_id = src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None
