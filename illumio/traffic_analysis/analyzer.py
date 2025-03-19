@@ -131,6 +131,7 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
                     max_retries = 3
                     for attempt in range(max_retries):
                         try:
+                            # Correction ici : Utilisation de store_traffic_flows au lieu de store_flows
                             if self.db.store_traffic_flows(query_id, results):
                                 print("✅ Initial results stored successfully.")
                                 break
@@ -171,6 +172,7 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
                             max_retries = 3
                             for attempt in range(max_retries):
                                 try:
+                                    # Correction ici : Utilisation de store_traffic_flows au lieu de store_flows
                                     if self.db.store_traffic_flows(query_id, results):
                                         print("✅ Enriched results stored successfully.")
                                         break
@@ -211,3 +213,61 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
             import traceback
             print(traceback.format_exc())
             return False
+    
+    def get_queries(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieve existing traffic queries.
+        
+        Args:
+            status (str, optional): Filter by query status
+        
+        Returns:
+            List of traffic query details
+        """
+        if not self.save_to_db:
+            print("Database is disabled, cannot retrieve queries.")
+            return []
+        
+        return self.db.get_traffic_queries(status)
+    
+    def get_flows(self, query_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve traffic flows for a specific query.
+        
+        Args:
+            query_id (str): ID of the traffic query
+        
+        Returns:
+            List of traffic flows
+        """
+        if not self.save_to_db:
+            print("Database is disabled, cannot retrieve flows.")
+            return []
+        
+        return self.db.get_traffic_flows(query_id)
+    
+    def export_flows(self, 
+                     query_id: str, 
+                     format_type: str = 'json', 
+                     output_file: Optional[str] = None) -> bool:
+        """
+        Export traffic flows for a specific query.
+        
+        Args:
+            query_id (str): ID of the traffic query
+            format_type (str): Export format ('json' or 'csv')
+            output_file (str, optional): Custom output filename
+        
+        Returns:
+            bool: True if export successful
+        """
+        if not self.save_to_db:
+            print("Database is disabled, cannot export flows.")
+            return False
+        
+        # Delegate to export handler
+        return self.export_handler.export_query_results(
+            query_id, 
+            format_type, 
+            output_file
+        )
