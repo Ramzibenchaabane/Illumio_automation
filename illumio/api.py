@@ -234,3 +234,4 @@ class IllumioAPI:
         """Récupère les résultats d'une requête asynchrone de trafic."""
         print("Récupération des résultats d'analyse de trafic...")
         return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
+    
