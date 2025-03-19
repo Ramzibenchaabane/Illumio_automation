@@ -7,7 +7,7 @@ from .api_core import IllumioAPICore
 from .api import IllumioAPI
 from .database import IllumioDatabase
 from .sync_manager import IllumioSyncManager
-from .traffic_analyzer import IllumioTrafficAnalyzer
+from .traffic_analysis.analyzer import IllumioTrafficAnalyzer
 from .async_operations import AsyncOperation, TrafficAnalysisOperation
 from .exceptions import (
     IllumioAPIError, 

@@ -7,7 +7,7 @@ import os
 import time
 import pandas as pd
 from datetime import datetime, timedelta
-from illumio import IllumioTrafficAnalyzer
+from illumio.traffic_analysis.analyzer import IllumioTrafficAnalyzer
 from cli_modules.menu_utils import print_header, print_menu, get_user_choice, test_connection, initialize_database
 
 def traffic_analysis_menu():
