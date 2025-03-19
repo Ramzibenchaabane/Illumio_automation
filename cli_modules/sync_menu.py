@@ -1,9 +1,10 @@
-#cli_modues/sync_menu.py
+# cli_modules/sync_menu.py
 #!/usr/bin/env python3
+"""
+Module de menu pour la synchronisation des données Illumio.
+"""
 import time
-from illumio import IllumioAPI
-from illumio.database import IllumioDatabase
-from sync_data import sync_all_data
+from illumio import IllumioSyncManager
 from cli_modules.menu_utils import print_header, print_menu, get_user_choice, test_connection, initialize_database
 
 def sync_database_menu():
@@ -21,7 +22,7 @@ def sync_database_menu():
     
     print("\nOptions de synchronisation:")
     options = [
-        "Synchroniser tous les éléments (mode asynchrone)",
+        "Synchroniser tous les éléments",
         "Synchroniser uniquement les workloads",
         "Synchroniser uniquement les labels",
         "Synchroniser uniquement les listes d'IPs",
@@ -37,12 +38,30 @@ def sync_database_menu():
     
     start_time = time.time()
     
+    # Créer le gestionnaire de synchronisation
+    sync_manager = IllumioSyncManager()
+    
     if choice == 1:
-        print("\nSynchronisation complète en cours (mode asynchrone)...")
-        success = sync_all_data()
+        print("\nSynchronisation complète en cours...")
+        success = sync_manager.sync_all()
     else:
         print("\nSynchronisation partielle en cours...")
-        success = sync_specific_data(choice)
+        # Mapper les choix de menu aux types de ressources
+        resource_types = {
+            2: ['workloads'],
+            3: ['labels'],
+            4: ['ip_lists'],
+            5: ['services'],
+            6: ['label_groups']
+        }
+        
+        # Synchroniser les types de ressources spécifiés
+        selected_types = resource_types.get(choice, [])
+        if selected_types:
+            success = sync_manager.sync_multiple(selected_types)
+        else:
+            print("Option non valide.")
+            success = False
     
     end_time = time.time()
     duration = end_time - start_time
@@ -53,80 +72,3 @@ def sync_database_menu():
         print(f"\n❌ Échec de la synchronisation après {duration:.2f} secondes.")
     
     input("\nAppuyez sur Entrée pour revenir au menu principal...")
-
-def sync_specific_data(choice):
-    """Synchronise un type spécifique de données."""
-    try:
-        api = IllumioAPI()
-        db = IllumioDatabase()
-        
-        if choice == 2:  # Workloads
-            print("Récupération des workloads (mode asynchrone)...")
-            workloads = api.get_workloads()
-            if workloads:
-                print(f"✅ {len(workloads)} workloads récupérés.")
-                if db.store_workloads(workloads):
-                    print("✅ Workloads stockés dans la base de données.")
-                    return True
-                else:
-                    print("❌ Erreur lors du stockage des workloads.")
-            else:
-                print("❌ Échec de la récupération des workloads.")
-        
-        elif choice == 3:  # Labels
-            print("Récupération des labels (mode asynchrone)...")
-            labels = api.get_labels()
-            if labels:
-                print(f"✅ {len(labels)} labels récupérés.")
-                if db.store_labels(labels):
-                    print("✅ Labels stockés dans la base de données.")
-                    return True
-                else:
-                    print("❌ Erreur lors du stockage des labels.")
-            else:
-                print("❌ Échec de la récupération des labels.")
-        
-        elif choice == 4:  # IP Lists
-            print("Récupération des listes d'IPs (mode asynchrone)...")
-            ip_lists = api.get_ip_lists()
-            if ip_lists:
-                print(f"✅ {len(ip_lists)} listes d'IPs récupérées.")
-                if db.store_ip_lists(ip_lists):
-                    print("✅ Listes d'IPs stockées dans la base de données.")
-                    return True
-                else:
-                    print("❌ Erreur lors du stockage des listes d'IPs.")
-            else:
-                print("❌ Échec de la récupération des listes d'IPs.")
-        
-        elif choice == 5:  # Services
-            print("Récupération des services (mode asynchrone)...")
-            services = api.get_services()
-            if services:
-                print(f"✅ {len(services)} services récupérés.")
-                if db.store_services(services):
-                    print("✅ Services stockés dans la base de données.")
-                    return True
-                else:
-                    print("❌ Erreur lors du stockage des services.")
-            else:
-                print("❌ Échec de la récupération des services.")
-        
-        elif choice == 6:  # Label Groups
-            print("Récupération des groupes de labels (mode asynchrone)...")
-            label_groups = api.get_label_groups()
-            if label_groups:
-                print(f"✅ {len(label_groups)} groupes de labels récupérés.")
-                if db.store_label_groups(label_groups):
-                    print("✅ Groupes de labels stockés dans la base de données.")
-                    return True
-                else:
-                    print("❌ Erreur lors du stockage des groupes de labels.")
-            else:
-                print("❌ Échec de la récupération des groupes de labels.")
-        
-        return False
-    
-    except Exception as e:
-        print(f"❌ Erreur lors de la synchronisation: {e}")
-        return False

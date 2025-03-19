@@ -1,116 +1,47 @@
-#traffic_analysis.py
+# traffic_analysis.py
 #!/usr/bin/env python3
+"""
+Script pour l'analyse de trafic Illumio.
+"""
 import sys
 import time
 import json
 import argparse
 from datetime import datetime, timedelta
 from illumio import (
-    IllumioAPI, 
+    IllumioTrafficAnalyzer,
     ConfigurationError, 
     APIRequestError, 
-    TimeoutError, 
-    TrafficAnalysisOperation
+    TimeoutError
 )
-from illumio.database import IllumioDatabase
 
-def analyze_traffic(query_data=None, query_name=None, save_to_db=True, polling_interval=5, max_attempts=60):
-    """Exécute une analyse de trafic et stocke les résultats dans la base de données."""
-    try:
-        # Initialiser l'API et la base de données
-        api = IllumioAPI()
-        db = IllumioDatabase() if save_to_db else None
-        
-        # Initialiser la base de données si nécessaire
-        if db:
-            db.init_db()
-        
-        # Test de connexion
-        success, message = api.test_connection()
-        if not success:
-            print(f"Échec de la connexion: {message}")
-            return False
-        
-        print(f"✅ {message}")
-        
-        # Créer une instance d'opération d'analyse de trafic
-        traffic_op = TrafficAnalysisOperation(
-            api=api,
-            polling_interval=polling_interval,
-            max_attempts=max_attempts,
-            status_callback=lambda status, response: on_status_update(status, response, db)
-        )
-        
-        # Utiliser la requête fournie ou créer une requête par défaut
-        if not query_data:
-            # Générer un nom de requête par défaut si non fourni
-            if not query_name:
-                query_name = f"Traffic_Analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                
-            query_data = traffic_op.create_default_query(query_name)
-        
-        print(f"\nSoumission de la requête de trafic '{query_data.get('query_name')}'...")
-        
-        # Stocker la requête dans la base de données
-        if db:
-            db.store_traffic_query(query_data, "pending", status="created")
-        
-        # Soumettre la requête et obtenir l'ID
-        query_id = traffic_op.submit(query_data)
-        print(f"✅ Requête soumise avec l'ID: {query_id}")
-        
-        # Mettre à jour l'ID dans la base de données
-        if db and query_id:
-            db.update_traffic_query_id("pending", query_id)
-        
-        print("\nSurveillance du statut de la requête...")
-        
-        # Exécuter l'opération asynchrone avec surveillance
-        results = traffic_op.execute(query_data)
-        
-        if not results:
-            print("❌ Aucun résultat obtenu.")
-            return False
-        
-        print(f"✅ {len(results)} flux de trafic récupérés.")
-        
-        # Stocker les résultats dans la base de données
-        if db and query_id:
-            print("Stockage des résultats dans la base de données...")
-            if db.store_traffic_flows(query_id, results):
-                print("✅ Résultats stockés avec succès.")
-            else:
-                print("❌ Erreur lors du stockage des résultats.")
-        
-        return results
-        
-    except ConfigurationError as e:
-        print(f"Erreur de configuration: {e}")
-        return False
-    except APIRequestError as e:
-        print(f"Erreur API: {e}")
-        return False
-    except TimeoutError as e:
-        print(f"Erreur de délai d'attente: {e}")
-        return False
-    except Exception as e:
-        print(f"Erreur inattendue: {e}")
-        return False
-
-def on_status_update(status, response, db=None):
-    """Fonction de rappel pour les mises à jour d'état des requêtes asynchrones."""
-    query_id = response.get('id')
-    print(f"Statut de la requête {query_id}: {status}")
+def analyze_traffic(query_data=None, query_name=None, days=7, max_results=10000, save_to_db=True):
+    """
+    Exécute une analyse de trafic.
     
-    # Indicateur de progression visuel
-    progress_chars = ['|', '/', '-', '\\']
-    progress_char = progress_chars[hash(status) % len(progress_chars)]
-    print(f"{progress_char} ", end='')
-    sys.stdout.flush()
+    Args:
+        query_data (dict, optional): Données de requête personnalisées
+        query_name (str, optional): Nom de la requête
+        days (int): Nombre de jours à analyser
+        max_results (int): Nombre maximum de résultats
+        save_to_db (bool): Enregistrer les résultats dans la base de données
+        
+    Returns:
+        list/bool: Résultats de l'analyse ou False si échec
+    """
+    # Calculer les dates pour l'analyse
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    date_range = (start_date, end_date)
     
-    # Mettre à jour l'état dans la base de données
-    if db and query_id:
-        db.update_traffic_query_status(query_id, status)
+    # Créer et utiliser l'analyseur de trafic
+    analyzer = IllumioTrafficAnalyzer()
+    return analyzer.analyze(
+        query_data=query_data,
+        query_name=query_name,
+        date_range=date_range,
+        max_results=max_results
+    )
 
 def main():
     """Fonction principale."""
@@ -121,8 +52,54 @@ def main():
     parser.add_argument('-d', '--days', type=int, default=7, help='Nombre de jours à analyser (par défaut: 7)')
     parser.add_argument('-m', '--max', type=int, default=10000, help='Nombre maximum de résultats (par défaut: 10000)')
     parser.add_argument('--no-db', action='store_true', help="Ne pas stocker les résultats dans la base de données")
+    parser.add_argument('--format', choices=['json', 'csv'], default='json', help='Format d\'export (par défaut: json)')
+    parser.add_argument('--list', action='store_true', help='Lister les analyses de trafic existantes')
+    parser.add_argument('--get', help='Récupérer les résultats d\'une analyse existante par ID')
     
     args = parser.parse_args()
+    
+    # Créer l'analyseur de trafic
+    analyzer = IllumioTrafficAnalyzer()
+    
+    # Lister les analyses existantes
+    if args.list:
+        queries = analyzer.get_queries()
+        if not queries:
+            print("Aucune analyse de trafic trouvée.")
+            return 0
+        
+        print(f"{len(queries)} analyses trouvées:\n")
+        print(f"{'ID':<8} {'NOM':<30} {'STATUT':<15} {'DATE':<20}")
+        print("-" * 60)
+        
+        for query in queries:
+            query_id = query.get('id')
+            name = query.get('query_name')
+            status = query.get('status')
+            created_at = query.get('created_at')
+            
+            # Limiter la longueur du nom pour l'affichage
+            if name and len(name) > 28:
+                name = name[:25] + "..."
+            
+            print(f"{query_id:<8} {name:<30} {status:<15} {created_at:<20}")
+        
+        return 0
+    
+    # Récupérer les résultats d'une analyse existante
+    if args.get:
+        flows = analyzer.get_flows(args.get)
+        if not flows:
+            print(f"Aucun flux trouvé pour l'analyse {args.get}.")
+            return 1
+        
+        print(f"{len(flows)} flux trouvés.")
+        
+        # Exporter si un fichier de sortie est spécifié
+        if args.output:
+            analyzer.export_flows(args.get, format_type=args.format, output_file=args.output)
+        
+        return 0
     
     print("=== Analyse de trafic Illumio ===")
     start_time = time.time()
@@ -142,23 +119,47 @@ def main():
     results = analyze_traffic(
         query_data=query_data,
         query_name=args.name,
+        days=args.days,
+        max_results=args.max,
         save_to_db=not args.no_db
     )
     
     # Enregistrer les résultats dans un fichier si demandé
     if results and args.output:
-        try:
-            with open(args.output, 'w') as f:
-                json.dump(results, f, indent=2)
+        if isinstance(results, list):
+            try:
+                if args.format.lower() == 'json':
+                    with open(args.output, 'w') as f:
+                        json.dump(results, f, indent=2)
+                elif args.format.lower() == 'csv':
+                    import csv
+                    fieldnames = [
+                        'src', 'dst', 'service', 'policy_decision',
+                        'num_connections', 'flow_direction'
+                    ]
+                    with open(args.output, 'w', newline='') as f:
+                        writer = csv.DictWriter(f, fieldnames=fieldnames)
+                        writer.writeheader()
+                        for flow in results:
+                            simplified_flow = {
+                                'src': flow.get('src', {}).get('ip'),
+                                'dst': flow.get('dst', {}).get('ip'),
+                                'service': flow.get('service', {}).get('name'),
+                                'policy_decision': flow.get('policy_decision'),
+                                'num_connections': flow.get('num_connections'),
+                                'flow_direction': flow.get('flow_direction')
+                            }
+                            writer.writerow(simplified_flow)
+                
                 print(f"Résultats enregistrés dans {args.output}")
-        except Exception as e:
-            print(f"Erreur lors de l'enregistrement des résultats: {e}")
+            except Exception as e:
+                print(f"Erreur lors de l'enregistrement des résultats: {e}")
     
     end_time = time.time()
     duration = end_time - start_time
     print(f"\nDurée de l'analyse: {duration:.2f} secondes")
     
-    return 0
+    return 0 if results else 1
 
 if __name__ == "__main__":
     sys.exit(main())

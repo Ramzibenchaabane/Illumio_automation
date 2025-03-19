@@ -1,110 +1,67 @@
-#sync_data.py
+# sync_data.py
 #!/usr/bin/env python3
+"""
+Script pour synchroniser les données depuis l'API Illumio vers la base de données locale.
+"""
 import sys
 import time
-from illumio import IllumioAPI, ConfigurationError, APIRequestError
-from illumio.database import IllumioDatabase
+import argparse
+from illumio import IllumioSyncManager, ConfigurationError, APIRequestError
 
 def sync_all_data():
     """Synchronise toutes les données depuis Illumio PCE vers la base de données locale."""
-    try:
-        # Initialiser l'API et la base de données
-        api = IllumioAPI()
-        db = IllumioDatabase()
-        
-        # Initialiser la structure de la base de données
-        print("Initialisation de la base de données...")
-        if not db.init_db():
-            print("Erreur lors de l'initialisation de la base de données.")
-            return False
-        
-        # Test de connexion
-        success, message = api.test_connection()
-        if not success:
-            print(f"Échec de la connexion: {message}")
-            return False
-        
-        print(f"✅ {message}")
-        
-        # Synchroniser les labels
-        print("\nRécupération des labels (mode asynchrone)...")
-        labels = api.get_labels()
-        if labels:
-            print(f"✅ {len(labels)} labels récupérés.")
-            if db.store_labels(labels):
-                print("✅ Labels stockés dans la base de données.")
-            else:
-                print("❌ Erreur lors du stockage des labels.")
-        else:
-            print("❌ Échec de la récupération des labels.")
-        
-        # Synchroniser les workloads
-        print("\nRécupération des workloads (mode asynchrone)...")
-        workloads = api.get_workloads()
-        if workloads:
-            print(f"✅ {len(workloads)} workloads récupérés.")
-            if db.store_workloads(workloads):
-                print("✅ Workloads stockés dans la base de données.")
-            else:
-                print("❌ Erreur lors du stockage des workloads.")
-        else:
-            print("❌ Échec de la récupération des workloads.")
-        
-        # Synchroniser les IP Lists
-        print("\nRécupération des listes d'IPs (mode asynchrone)...")
-        ip_lists = api.get_ip_lists()  # Le pversion est maintenant dans le chemin de l'endpoint
-        if ip_lists:
-            print(f"✅ {len(ip_lists)} listes d'IPs récupérées.")
-            if db.store_ip_lists(ip_lists):
-                print("✅ Listes d'IPs stockées dans la base de données.")
-            else:
-                print("❌ Erreur lors du stockage des listes d'IPs.")
-        else:
-            print("❌ Échec de la récupération des listes d'IPs.")
-        
-        # Synchroniser les services
-        print("\nRécupération des services (mode asynchrone)...")
-        services = api.get_services()  # Le pversion est maintenant dans le chemin de l'endpoint
-        if services:
-            print(f"✅ {len(services)} services récupérés.")
-            if db.store_services(services):
-                print("✅ Services stockés dans la base de données.")
-            else:
-                print("❌ Erreur lors du stockage des services.")
-        else:
-            print("❌ Échec de la récupération des services.")
-        
-        # Synchroniser les groupes de labels
-        print("\nRécupération des groupes de labels (mode asynchrone)...")
-        label_groups = api.get_label_groups()  # Le pversion est maintenant dans le chemin de l'endpoint
-        if label_groups:
-            print(f"✅ {len(label_groups)} groupes de labels récupérés.")
-            if db.store_label_groups(label_groups):
-                print("✅ Groupes de labels stockés dans la base de données.")
-            else:
-                print("❌ Erreur lors du stockage des groupes de labels.")
-        else:
-            print("❌ Échec de la récupération des groupes de labels.")
-        
-        print("\n✅ Synchronisation terminée avec succès.")
-        return True
+    sync_manager = IllumioSyncManager()
+    return sync_manager.sync_all()
+
+def sync_specific_data(resource_types):
+    """
+    Synchronise des types de données spécifiques.
     
-    except ConfigurationError as e:
-        print(f"Erreur de configuration: {e}")
-        return False
-    except APIRequestError as e:
-        print(f"Erreur API: {e}")
-        return False
-    except Exception as e:
-        print(f"Erreur inattendue: {e}")
-        return False
+    Args:
+        resource_types (list): Liste des types de ressources à synchroniser
+    
+    Returns:
+        bool: True si la synchronisation a réussi, False sinon
+    """
+    sync_manager = IllumioSyncManager()
+    return sync_manager.sync_multiple(resource_types)
 
 def main():
     """Fonction principale."""
+    parser = argparse.ArgumentParser(description='Synchronisation des données Illumio')
+    parser.add_argument('--all', action='store_true', help='Synchroniser tous les types de données')
+    parser.add_argument('--workloads', action='store_true', help='Synchroniser les workloads')
+    parser.add_argument('--labels', action='store_true', help='Synchroniser les labels')
+    parser.add_argument('--ip-lists', action='store_true', help='Synchroniser les listes d\'IPs')
+    parser.add_argument('--services', action='store_true', help='Synchroniser les services')
+    parser.add_argument('--label-groups', action='store_true', help='Synchroniser les groupes de labels')
+    
+    args = parser.parse_args()
+    
     print("=== Synchronisation des données Illumio ===")
     start_time = time.time()
     
-    success = sync_all_data()
+    # Déterminer les types de ressources à synchroniser
+    if args.all:
+        success = sync_all_data()
+    else:
+        resource_types = []
+        if args.workloads:
+            resource_types.append('workloads')
+        if args.labels:
+            resource_types.append('labels')
+        if args.ip_lists:
+            resource_types.append('ip_lists')
+        if args.services:
+            resource_types.append('services')
+        if args.label_groups:
+            resource_types.append('label_groups')
+        
+        if not resource_types:
+            print("Aucun type de données spécifié. Utilisez --all pour tout synchroniser ou spécifiez des types spécifiques.")
+            return 1
+        
+        success = sync_specific_data(resource_types)
     
     end_time = time.time()
     duration = end_time - start_time

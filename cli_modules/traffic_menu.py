@@ -1,11 +1,11 @@
-#cli_modues/traffic_menu.py
+# cli_modules/traffic_menu.py
 #!/usr/bin/env python3
+"""
+Module de menu pour l'analyse de trafic Illumio.
+"""
 import time
-import json
 from datetime import datetime, timedelta
-from illumio import IllumioAPI, TrafficAnalysisOperation
-from illumio.database import IllumioDatabase
-from traffic_analysis import analyze_traffic
+from illumio import IllumioTrafficAnalyzer
 from cli_modules.menu_utils import print_header, print_menu, get_user_choice, test_connection, initialize_database
 
 def traffic_analysis_menu():
@@ -45,6 +45,9 @@ def traffic_analysis_menu():
 
 def create_traffic_analysis():
     """Crée une nouvelle analyse de trafic."""
+    # Initialiser l'analyseur de trafic
+    analyzer = IllumioTrafficAnalyzer()
+    
     # Demander les paramètres de l'analyse
     print("\nCréation d'une nouvelle analyse de trafic:")
     query_name = input("Nom de la requête (laisser vide pour un nom automatique): ")
@@ -75,21 +78,17 @@ def create_traffic_analysis():
     print("\nDémarrage de l'analyse de trafic...")
     start_time = time.time()
     
-    # Créer une requête par défaut avec les paramètres spécifiés
+    # Créer les dates pour l'analyse
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    date_range = (start_date, end_date)
     
-    api = IllumioAPI()
-    traffic_op = TrafficAnalysisOperation(api=api)
-    query_data = traffic_op.create_default_query(
-        query_name=query_name or f"Traffic_Analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        start_date=start_date,
-        end_date=end_date,
+    # Exécuter l'analyse de trafic
+    results = analyzer.analyze(
+        query_name=query_name,
+        date_range=date_range,
         max_results=max_results
     )
-    
-    # Exécuter l'analyse
-    results = analyze_traffic(query_data=query_data)
     
     end_time = time.time()
     duration = end_time - start_time
@@ -105,8 +104,11 @@ def view_traffic_analyses():
     print("\nRécupération des analyses de trafic...")
     
     try:
-        db = IllumioDatabase()
-        queries = db.get_traffic_queries()
+        # Initialiser l'analyseur de trafic
+        analyzer = IllumioTrafficAnalyzer()
+        
+        # Récupérer les requêtes
+        queries = analyzer.get_queries()
         
         if not queries:
             print("Aucune analyse de trafic trouvée.")
@@ -143,8 +145,11 @@ def view_traffic_analyses():
 def view_traffic_analysis_details(query_id):
     """Affiche les détails d'une analyse de trafic spécifique."""
     try:
-        db = IllumioDatabase()
-        flows = db.get_traffic_flows(query_id)
+        # Initialiser l'analyseur de trafic
+        analyzer = IllumioTrafficAnalyzer()
+        
+        # Récupérer les flux
+        flows = analyzer.get_flows(query_id)
         
         if not flows:
             print(f"Aucun flux trouvé pour l'analyse {query_id}.")
@@ -200,8 +205,11 @@ def export_traffic_analysis():
     print("\nRécupération des analyses de trafic...")
     
     try:
-        db = IllumioDatabase()
-        queries = db.get_traffic_queries()
+        # Initialiser l'analyseur de trafic
+        analyzer = IllumioTrafficAnalyzer()
+        
+        # Récupérer les requêtes
+        queries = analyzer.get_queries()
         
         if not queries:
             print("Aucune analyse de trafic trouvée.")
@@ -232,9 +240,8 @@ def export_traffic_analysis():
         if not query_id:
             return
         
-        # Récupérer les flux
-        flows = db.get_traffic_flows(query_id)
-        
+        # Vérifier que l'analyse existe
+        flows = analyzer.get_flows(query_id)
         if not flows:
             print(f"Aucun flux trouvé pour l'analyse {query_id}.")
             return
@@ -257,75 +264,11 @@ def export_traffic_analysis():
             filename = default_filename
         
         # Exporter selon le format choisi
-        if format_choice == 1:
-            export_to_csv(flows, filename)
-        elif format_choice == 2:
-            export_to_json(flows, filename)
+        format_type = 'csv' if format_choice == 1 else 'json'
+        success = analyzer.export_flows(query_id, format_type=format_type, output_file=filename)
+        
+        if not success:
+            print("❌ Erreur lors de l'export.")
     
     except Exception as e:
         print(f"Erreur lors de l'export: {e}")
-
-def export_to_csv(flows, filename):
-    """Exporte les flux de trafic au format CSV."""
-    import csv
-    
-    if not filename.endswith('.csv'):
-        filename += '.csv'
-    
-    try:
-        with open(filename, 'w', newline='') as csvfile:
-            # Déterminer les en-têtes à partir des clés du premier flux
-            fieldnames = [
-                'src_ip', 'src_workload_id', 'dst_ip', 'dst_workload_id',
-                'service', 'port', 'protocol', 'policy_decision',
-                'first_detected', 'last_detected', 'num_connections', 'flow_direction'
-            ]
-            
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            
-            for flow in flows:
-                # Ne garder que les champs dans fieldnames
-                filtered_flow = {k: flow.get(k) for k in fieldnames if k in flow}
-                writer.writerow(filtered_flow)
-        
-        print(f"\n✅ Export CSV terminé. Fichier sauvegardé: {filename}")
-    
-    except Exception as e:
-        print(f"Erreur lors de l'export CSV: {e}")
-
-def export_to_json(flows, filename):
-    """Exporte les flux de trafic au format JSON."""
-    import json
-    
-    if not filename.endswith('.json'):
-        filename += '.json'
-    
-    try:
-        with open(filename, 'w') as jsonfile:
-            # Limiter les champs à exporter pour plus de lisibilité
-            simplified_flows = []
-            
-            for flow in flows:
-                simplified_flow = {
-                    'src_ip': flow.get('src_ip'),
-                    'src_workload_id': flow.get('src_workload_id'),
-                    'dst_ip': flow.get('dst_ip'),
-                    'dst_workload_id': flow.get('dst_workload_id'),
-                    'service': flow.get('service'),
-                    'port': flow.get('port'),
-                    'protocol': flow.get('protocol'),
-                    'policy_decision': flow.get('policy_decision'),
-                    'first_detected': flow.get('first_detected'),
-                    'last_detected': flow.get('last_detected'),
-                    'num_connections': flow.get('num_connections'),
-                    'flow_direction': flow.get('flow_direction')
-                }
-                simplified_flows.append(simplified_flow)
-            
-            json.dump(simplified_flows, jsonfile, indent=2)
-        
-        print(f"\n✅ Export JSON terminé. Fichier sauvegardé: {filename}")
-    
-    except Exception as e:
-        print(f"Erreur lors de l'export JSON: {e}")
