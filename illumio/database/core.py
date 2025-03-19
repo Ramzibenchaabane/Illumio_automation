@@ -127,7 +127,7 @@ class IllumioDatabase:
     
     def store_traffic_flows(self, query_id, flows):
         """Stocke les résultats d'une requête de trafic asynchrone."""
-        return self.traffic.store_flows(query_id, flows)
+        return self.traffic.store_traffic_flows(query_id, flows)
     
     def get_traffic_queries(self, status=None):
         """Récupère les requêtes de trafic asynchrones avec filtre optionnel sur le statut."""
