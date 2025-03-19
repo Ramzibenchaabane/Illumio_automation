@@ -28,6 +28,8 @@ class IllumioTrafficAnalyzer:
             self.db = db
             self.save_to_db = bool(db)  # Si db est None, save_to_db sera False
     
+# Voici la méthode corrigée dans la classe IllumioTrafficAnalyzer
+
     def analyze(self, query_data=None, query_name=None, date_range=None, 
                 max_results=10000, polling_interval=5, max_attempts=60,
                 status_callback: Optional[Callable[[str, Dict[str, Any], Optional[IllumioDatabase]], None]] = None,
@@ -109,7 +111,7 @@ class IllumioTrafficAnalyzer:
                 print("❌ Échec de soumission de la requête.")
                 print("Vérifiez le format de votre requête et les journaux pour plus de détails.")
                 return False
-                
+                    
             print(f"✅ Requête soumise avec l'ID: {query_id}")
             
             # Mettre à jour l'ID dans la base de données
@@ -127,6 +129,15 @@ class IllumioTrafficAnalyzer:
             
             print(f"✅ {len(results)} flux de trafic récupérés.")
             
+            # À CE STADE SEULEMENT, la première requête asynchrone est complétée
+            # Stocker les résultats initiaux dans la base de données
+            if self.save_to_db and query_id:
+                print("Stockage des résultats initiaux dans la base de données...")
+                if self.db.store_traffic_flows(query_id, results):
+                    print("✅ Résultats initiaux stockés avec succès.")
+                else:
+                    print("❌ Erreur lors du stockage des résultats initiaux.")
+            
             # Effectuer l'analyse de règles approfondie si demandé
             if perform_deep_analysis:
                 print("\nLancement de l'analyse de règles approfondie...")
@@ -134,17 +145,18 @@ class IllumioTrafficAnalyzer:
                 
                 if deep_results:
                     print(f"✅ Analyse de règles approfondie terminée avec {len(deep_results)} résultats.")
-                    results = deep_results  # Remplacer les résultats précédents par les résultats de l'analyse profonde
+                    # Mettre à jour les résultats avec les informations de règles
+                    results = deep_results
+                    
+                    # Stocker les résultats enrichis dans la base de données
+                    if self.save_to_db and query_id:
+                        print("Mise à jour des résultats avec les informations de règles...")
+                        if self.db.store_traffic_flows(query_id, results):
+                            print("✅ Résultats enrichis stockés avec succès.")
+                        else:
+                            print("❌ Erreur lors du stockage des résultats enrichis.")
                 else:
                     print("⚠️ L'analyse de règles approfondie n'a pas abouti, utilisation des résultats de base.")
-            
-            # Stocker les résultats dans la base de données
-            if self.save_to_db and query_id:
-                print("Stockage des résultats dans la base de données...")
-                if self.db.store_traffic_flows(query_id, results):
-                    print("✅ Résultats stockés avec succès.")
-                else:
-                    print("❌ Erreur lors du stockage des résultats.")
             
             return results
             
@@ -165,7 +177,7 @@ class IllumioTrafficAnalyzer:
             import traceback
             print(traceback.format_exc())
             return False
-    
+
     def _perform_deep_rule_analysis(self, query_id: str, polling_interval: int = 5, max_attempts: int = 60) -> Union[List[Dict[str, Any]], None]:
         """
         Effectue une analyse de règles approfondie après une requête de trafic asynchrone.
@@ -179,6 +191,12 @@ class IllumioTrafficAnalyzer:
             list/None: Liste des résultats avec analyse de règles ou None si échec
         """
         try:
+            # Vérifier d'abord que la requête de trafic initiale est bien terminée
+            status_response = self.api._make_request('get', f'traffic_flows/async_queries/{query_id}')
+            if status_response.get('status') != 'completed':
+                print("❌ La requête de trafic initiale n'est pas encore terminée. Impossible de lancer l'analyse de règles.")
+                return None
+            
             # Appel pour lancer l'analyse de règles approfondie
             print("Démarrage de l'analyse de règles approfondie...")
             update_rules_response = self.api._make_request(
@@ -194,6 +212,10 @@ class IllumioTrafficAnalyzer:
             
             print("✅ Requête d'analyse de règles approfondie acceptée.")
             
+            # Mettre à jour le statut dans la base de données
+            if self.save_to_db:
+                self.db.update_traffic_query_rules_status(query_id, 'working')
+            
             # Surveiller l'état de l'analyse de règles
             print("Surveillance de l'état de l'analyse de règles...")
             
@@ -205,17 +227,24 @@ class IllumioTrafficAnalyzer:
                 status_response = self.api._make_request('get', f'traffic_flows/async_queries/{query_id}')
                 
                 # Récupérer l'état des règles
-                rules_status = status_response.get('rules', {}).get('status')
+                if 'rules' in status_response:
+                    rules_status = status_response.get('rules', {}).get('status')
                 
-                if rules_status:
-                    print(f"  État de l'analyse de règles: {rules_status} (tentative {attempts+1}/{max_attempts})")
-                    
-                    # Vérifier si l'analyse est terminée
-                    if rules_status == 'completed':
-                        print("Analyse de règles terminée avec succès, récupération des résultats...")
-                        break
+                    if rules_status:
+                        print(f"  État de l'analyse de règles: {rules_status} (tentative {attempts+1}/{max_attempts})")
+                        
+                        # Mettre à jour le statut dans la base de données
+                        if self.save_to_db:
+                            self.db.update_traffic_query_rules_status(query_id, rules_status)
+                        
+                        # Vérifier si l'analyse est terminée
+                        if rules_status == 'completed':
+                            print("Analyse de règles terminée avec succès, récupération des résultats...")
+                            break
+                    else:
+                        print(f"  État de l'analyse de règles non disponible... (tentative {attempts+1}/{max_attempts})")
                 else:
-                    print(f"  En attente de l'état d'analyse de règles... (tentative {attempts+1}/{max_attempts})")
+                    print(f"  En attente du début de l'analyse de règles... (tentative {attempts+1}/{max_attempts})")
                 
                 # Attendre avant la prochaine vérification
                 time.sleep(polling_interval)
@@ -235,7 +264,7 @@ class IllumioTrafficAnalyzer:
             )
             
             return final_results
-            
+                
         except APIRequestError as e:
             print(f"Erreur API lors de l'analyse de règles: {e}")
             return None
