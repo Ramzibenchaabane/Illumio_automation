@@ -15,7 +15,8 @@ from illumio import (
     TimeoutError
 )
 
-def analyze_traffic(query_data=None, query_name=None, days=7, max_results=10000, save_to_db=True):
+def analyze_traffic(query_data=None, query_name=None, days=7, max_results=10000, 
+                   save_to_db=True, perform_deep_analysis=True):
     """
     Exécute une analyse de trafic.
     
@@ -25,6 +26,7 @@ def analyze_traffic(query_data=None, query_name=None, days=7, max_results=10000,
         days (int): Nombre de jours à analyser
         max_results (int): Nombre maximum de résultats
         save_to_db (bool): Enregistrer les résultats dans la base de données
+        perform_deep_analysis (bool): Effectuer une analyse de règles approfondie
         
     Returns:
         list/bool: Résultats de l'analyse ou False si échec
@@ -40,7 +42,8 @@ def analyze_traffic(query_data=None, query_name=None, days=7, max_results=10000,
         query_data=query_data,
         query_name=query_name,
         date_range=date_range,
-        max_results=max_results
+        max_results=max_results,
+        perform_deep_analysis=perform_deep_analysis
     )
 
 def main():
@@ -52,6 +55,7 @@ def main():
     parser.add_argument('-d', '--days', type=int, default=7, help='Nombre de jours à analyser (par défaut: 7)')
     parser.add_argument('-m', '--max', type=int, default=10000, help='Nombre maximum de résultats (par défaut: 10000)')
     parser.add_argument('--no-db', action='store_true', help="Ne pas stocker les résultats dans la base de données")
+    parser.add_argument('--no-deep-analysis', action='store_true', help="Ne pas effectuer l'analyse de règles approfondie")
     parser.add_argument('--format', choices=['json', 'csv'], default='json', help='Format d\'export (par défaut: json)')
     parser.add_argument('--list', action='store_true', help='Lister les analyses de trafic existantes')
     parser.add_argument('--get', help='Récupérer les résultats d\'une analyse existante par ID')
@@ -69,20 +73,21 @@ def main():
             return 0
         
         print(f"{len(queries)} analyses trouvées:\n")
-        print(f"{'ID':<8} {'NOM':<30} {'STATUT':<15} {'DATE':<20}")
-        print("-" * 60)
+        print(f"{'ID':<8} {'NOM':<30} {'STATUT':<15} {'ANALYSE RÈGLES':<15} {'DATE':<20}")
+        print("-" * 85)
         
         for query in queries:
             query_id = query.get('id')
             name = query.get('query_name')
             status = query.get('status')
+            rules_status = query.get('rules_status', 'N/A')
             created_at = query.get('created_at')
             
             # Limiter la longueur du nom pour l'affichage
             if name and len(name) > 28:
                 name = name[:25] + "..."
             
-            print(f"{query_id:<8} {name:<30} {status:<15} {created_at:<20}")
+            print(f"{query_id:<8} {name:<30} {status:<15} {rules_status:<15} {created_at:<20}")
         
         return 0
     
@@ -121,7 +126,8 @@ def main():
         query_name=args.name,
         days=args.days,
         max_results=args.max,
-        save_to_db=not args.no_db
+        save_to_db=not args.no_db,
+        perform_deep_analysis=not args.no_deep_analysis
     )
     
     # Enregistrer les résultats dans un fichier si demandé
@@ -135,19 +141,30 @@ def main():
                     import csv
                     fieldnames = [
                         'src', 'dst', 'service', 'policy_decision',
-                        'num_connections', 'flow_direction'
+                        'num_connections', 'flow_direction',
+                        'rule_href', 'rule_name'  # Ajout des champs liés aux règles
                     ]
                     with open(args.output, 'w', newline='') as f:
                         writer = csv.DictWriter(f, fieldnames=fieldnames)
                         writer.writeheader()
                         for flow in results:
+                            # Extraction des données de règles si présentes
+                            rule_href = None
+                            rule_name = None
+                            if 'rules' in flow and 'sec_policy' in flow['rules']:
+                                sec_policy = flow['rules']['sec_policy']
+                                rule_href = sec_policy.get('href')
+                                rule_name = sec_policy.get('name')
+                                
                             simplified_flow = {
                                 'src': flow.get('src', {}).get('ip'),
                                 'dst': flow.get('dst', {}).get('ip'),
                                 'service': flow.get('service', {}).get('name'),
                                 'policy_decision': flow.get('policy_decision'),
                                 'num_connections': flow.get('num_connections'),
-                                'flow_direction': flow.get('flow_direction')
+                                'flow_direction': flow.get('flow_direction'),
+                                'rule_href': rule_href,
+                                'rule_name': rule_name
                             }
                             writer.writerow(simplified_flow)
                 

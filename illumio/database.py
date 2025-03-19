@@ -162,6 +162,8 @@ class IllumioDatabase:
                     status TEXT,
                     created_at TIMESTAMP,
                     completed_at TIMESTAMP,
+                    rules_status TEXT,
+                    rules_completed_at TIMESTAMP,
                     raw_query TEXT,
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -183,6 +185,9 @@ class IllumioDatabase:
                     last_detected TIMESTAMP,
                     num_connections INTEGER,
                     flow_direction TEXT,
+                    rule_href TEXT,
+                    rule_name TEXT,
+                    rule_sec_policy TEXT,
                     raw_data TEXT,
                     FOREIGN KEY (query_id) REFERENCES traffic_queries (id),
                     FOREIGN KEY (src_workload_id) REFERENCES workloads (id),
@@ -575,16 +580,38 @@ class IllumioDatabase:
             print(f"Erreur lors de la mise à jour de l'ID de la requête: {e}")
             return False
     
-    def update_traffic_query_status(self, query_id, status):
+    def update_traffic_query_status(self, query_id, status, rules_status=None):
         """Met à jour le statut d'une requête de trafic asynchrone."""
         try:
             with db_connection(self.db_file) as (conn, cursor):
-                cursor.execute('''
-                UPDATE traffic_queries
-                SET status = ?, 
-                    completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
-                WHERE id = ?
-                ''', (status, status, query_id))
+                # Mise à jour conditionnelle selon les statuts
+                if rules_status:
+                    # Si nous avons à la fois le statut de la requête et celui des règles
+                    if status == 'completed' and rules_status == 'completed':
+                        cursor.execute('''
+                        UPDATE traffic_queries
+                        SET status = ?, 
+                            completed_at = CURRENT_TIMESTAMP,
+                            rules_status = ?,
+                            rules_completed_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        ''', (status, rules_status, query_id))
+                    else:
+                        cursor.execute('''
+                        UPDATE traffic_queries
+                        SET status = ?, 
+                            completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                            rules_status = ?
+                        WHERE id = ?
+                        ''', (status, status, rules_status, query_id))
+                else:
+                    # Mise à jour du statut de la requête uniquement
+                    cursor.execute('''
+                    UPDATE traffic_queries
+                    SET status = ?, 
+                        completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
+                    WHERE id = ?
+                    ''', (status, status, query_id))
                 
                 # Également mettre à jour dans la nouvelle table d'opérations asynchrones
                 self.update_async_operation_status(query_id, status)
@@ -593,6 +620,23 @@ class IllumioDatabase:
                 
         except sqlite3.Error as e:
             print(f"Erreur lors de la mise à jour du statut de la requête: {e}")
+            return False
+    
+    def update_traffic_query_rules_status(self, query_id, rules_status):
+        """Met à jour le statut des règles d'une requête de trafic asynchrone."""
+        try:
+            with db_connection(self.db_file) as (conn, cursor):
+                cursor.execute('''
+                UPDATE traffic_queries
+                SET rules_status = ?,
+                    rules_completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE rules_completed_at END
+                WHERE id = ?
+                ''', (rules_status, rules_status, query_id))
+            
+            return True
+                
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la mise à jour du statut des règles: {e}")
             return False
     
     def store_traffic_flows(self, query_id, flows):
@@ -609,6 +653,19 @@ class IllumioDatabase:
                     service = flow.get('service', {})
                     timestamp_range = flow.get('timestamp_range', {})
                     
+                    # Extraire les informations de règles si disponibles
+                    rules = flow.get('rules', {})
+                    rule_href = None
+                    rule_name = None
+                    rule_sec_policy = None
+                    
+                    if rules and 'sec_policy' in rules:
+                        sec_policy = rules.get('sec_policy', {})
+                        if sec_policy:
+                            rule_href = sec_policy.get('href')
+                            rule_name = sec_policy.get('name')
+                            rule_sec_policy = json.dumps(sec_policy)
+                    
                     # Extraire les IDs des workloads s'ils existent
                     src_workload_id = src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None
                     dst_workload_id = dst.get('workload', {}).get('href', '').split('/')[-1] if dst.get('workload', {}).get('href') else None
@@ -617,8 +674,9 @@ class IllumioDatabase:
                     INSERT INTO traffic_flows 
                     (query_id, src_ip, src_workload_id, dst_ip, dst_workload_id, 
                     service, port, protocol, policy_decision, first_detected, 
-                    last_detected, num_connections, flow_direction, raw_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    last_detected, num_connections, flow_direction, rule_href,
+                    rule_name, rule_sec_policy, raw_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         query_id,
                         src.get('ip'),
@@ -633,11 +691,14 @@ class IllumioDatabase:
                         timestamp_range.get('last_detected'),
                         flow.get('num_connections'),
                         flow.get('flow_direction'),
+                        rule_href,
+                        rule_name,
+                        rule_sec_policy,
                         json.dumps(flow)
                     ))
                 
                 # Mettre à jour le statut de la requête
-                self.update_traffic_query_status(query_id, 'completed')
+                self.update_traffic_query_status(query_id, 'completed', rules_status='completed' if rules else None)
                 
                 # Mettre à jour les données dans la table d'opérations asynchrones
                 cursor.execute('''

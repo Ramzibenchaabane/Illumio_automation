@@ -6,11 +6,11 @@ import time
 import sys
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Callable, List, Union
+from typing import Dict, Any, Optional, Callable, List, Union, Tuple
 from .api import IllumioAPI
 from .database import IllumioDatabase
 from .async_operations import TrafficAnalysisOperation
-from .exceptions import ConfigurationError, APIRequestError, TimeoutError
+from .exceptions import ConfigurationError, APIRequestError, TimeoutError, AsyncOperationError
 
 class IllumioTrafficAnalyzer:
     """Gère l'analyse de trafic avec l'API Illumio."""
@@ -31,7 +31,7 @@ class IllumioTrafficAnalyzer:
     def analyze(self, query_data=None, query_name=None, date_range=None, 
                 max_results=10000, polling_interval=5, max_attempts=60,
                 status_callback: Optional[Callable[[str, Dict[str, Any], Optional[IllumioDatabase]], None]] = None,
-                debug=False) -> Union[List[Dict[str, Any]], bool]:
+                perform_deep_analysis=True, debug=False) -> Union[List[Dict[str, Any]], bool]:
         """
         Exécute une analyse de trafic et stocke les résultats dans la base de données.
         
@@ -43,6 +43,7 @@ class IllumioTrafficAnalyzer:
             polling_interval (int): Intervalle en secondes entre les vérifications d'état
             max_attempts (int): Nombre maximal de tentatives de vérification
             status_callback (callable, optional): Fonction de rappel pour recevoir les mises à jour d'état
+            perform_deep_analysis (bool): Si True, effectue une analyse de règles approfondie après l'analyse de trafic
             debug (bool): Si True, affiche plus d'informations de débogage
             
         Returns:
@@ -126,6 +127,17 @@ class IllumioTrafficAnalyzer:
             
             print(f"✅ {len(results)} flux de trafic récupérés.")
             
+            # Effectuer l'analyse de règles approfondie si demandé
+            if perform_deep_analysis:
+                print("\nLancement de l'analyse de règles approfondie...")
+                deep_results = self._perform_deep_rule_analysis(query_id, polling_interval, max_attempts)
+                
+                if deep_results:
+                    print(f"✅ Analyse de règles approfondie terminée avec {len(deep_results)} résultats.")
+                    results = deep_results  # Remplacer les résultats précédents par les résultats de l'analyse profonde
+                else:
+                    print("⚠️ L'analyse de règles approfondie n'a pas abouti, utilisation des résultats de base.")
+            
             # Stocker les résultats dans la base de données
             if self.save_to_db and query_id:
                 print("Stockage des résultats dans la base de données...")
@@ -153,6 +165,85 @@ class IllumioTrafficAnalyzer:
             import traceback
             print(traceback.format_exc())
             return False
+    
+    def _perform_deep_rule_analysis(self, query_id: str, polling_interval: int = 5, max_attempts: int = 60) -> Union[List[Dict[str, Any]], None]:
+        """
+        Effectue une analyse de règles approfondie après une requête de trafic asynchrone.
+        
+        Args:
+            query_id (str): ID de la requête de trafic terminée
+            polling_interval (int): Intervalle en secondes entre les vérifications d'état
+            max_attempts (int): Nombre maximal de tentatives de vérification
+            
+        Returns:
+            list/None: Liste des résultats avec analyse de règles ou None si échec
+        """
+        try:
+            # Appel pour lancer l'analyse de règles approfondie
+            print("Démarrage de l'analyse de règles approfondie...")
+            update_rules_response = self.api._make_request(
+                'put', 
+                f'traffic_flows/async_queries/{query_id}/update_rules',
+                params={'label_based_rules': 'false', 'offset': 0, 'limit': 100}
+            )
+            
+            # Vérifier si la requête a été acceptée (code 202)
+            if not update_rules_response:
+                print("❌ La requête d'analyse de règles approfondie a été rejetée.")
+                return None
+            
+            print("✅ Requête d'analyse de règles approfondie acceptée.")
+            
+            # Surveiller l'état de l'analyse de règles
+            print("Surveillance de l'état de l'analyse de règles...")
+            
+            attempts = 0
+            rules_status = None
+            
+            while attempts < max_attempts:
+                # Vérifier l'état actuel de la requête
+                status_response = self.api._make_request('get', f'traffic_flows/async_queries/{query_id}')
+                
+                # Récupérer l'état des règles
+                rules_status = status_response.get('rules', {}).get('status')
+                
+                if rules_status:
+                    print(f"  État de l'analyse de règles: {rules_status} (tentative {attempts+1}/{max_attempts})")
+                    
+                    # Vérifier si l'analyse est terminée
+                    if rules_status == 'completed':
+                        print("Analyse de règles terminée avec succès, récupération des résultats...")
+                        break
+                else:
+                    print(f"  En attente de l'état d'analyse de règles... (tentative {attempts+1}/{max_attempts})")
+                
+                # Attendre avant la prochaine vérification
+                time.sleep(polling_interval)
+                attempts += 1
+            
+            # Vérifier si l'analyse a été complétée
+            if rules_status != 'completed':
+                print(f"❌ L'analyse de règles n'a pas été complétée après {max_attempts} tentatives.")
+                return None
+            
+            # Récupérer les résultats finaux avec les règles
+            print("Récupération des résultats de l'analyse de règles...")
+            final_results = self.api._make_request(
+                'get', 
+                f'traffic_flows/async_queries/{query_id}/download',
+                params={'offset': 0, 'limit': 5000}
+            )
+            
+            return final_results
+            
+        except APIRequestError as e:
+            print(f"Erreur API lors de l'analyse de règles: {e}")
+            return None
+        except Exception as e:
+            print(f"Erreur inattendue lors de l'analyse de règles: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return None
     
     def _on_status_update(self, status: str, response: Dict[str, Any], 
                          external_callback: Optional[Callable[[str, Dict[str, Any], Optional[IllumioDatabase]], None]] = None) -> None:
@@ -290,7 +381,8 @@ class IllumioTrafficAnalyzer:
                             'first_detected': raw_data.get('timestamp_range', {}).get('first_detected'),
                             'last_detected': raw_data.get('timestamp_range', {}).get('last_detected'),
                             'num_connections': raw_data.get('num_connections'),
-                            'flow_direction': raw_data.get('flow_direction')
+                            'flow_direction': raw_data.get('flow_direction'),
+                            'rules': raw_data.get('rules')  # Ajout des règles issues de l'analyse approfondie
                         }
                     except json.JSONDecodeError:
                         # Si le décodage JSON échoue, utiliser les données directement
@@ -306,7 +398,8 @@ class IllumioTrafficAnalyzer:
                             'first_detected': flow.get('first_detected'),
                             'last_detected': flow.get('last_detected'),
                             'num_connections': flow.get('num_connections'),
-                            'flow_direction': flow.get('flow_direction')
+                            'flow_direction': flow.get('flow_direction'),
+                            'rules': flow.get('rules')  # Ajout des règles issues de l'analyse approfondie
                         }
                 else:
                     # Si le flux n'est pas au format brut, utiliser directement les champs
@@ -322,7 +415,8 @@ class IllumioTrafficAnalyzer:
                         'first_detected': flow.get('first_detected'),
                         'last_detected': flow.get('last_detected'),
                         'num_connections': flow.get('num_connections'),
-                        'flow_direction': flow.get('flow_direction')
+                        'flow_direction': flow.get('flow_direction'),
+                        'rules': flow.get('rules')  # Ajout des règles issues de l'analyse approfondie
                     }
                 
                 simplified_flows.append(simplified_flow)
@@ -359,7 +453,8 @@ class IllumioTrafficAnalyzer:
             fieldnames = [
                 'src_ip', 'src_workload_id', 'dst_ip', 'dst_workload_id',
                 'service', 'port', 'protocol', 'policy_decision',
-                'first_detected', 'last_detected', 'num_connections', 'flow_direction'
+                'first_detected', 'last_detected', 'num_connections', 'flow_direction',
+                'rule_href', 'rule_name'  # Ajout des informations de règles
             ]
             
             with open(filename, 'w', newline='') as f:
@@ -374,6 +469,17 @@ class IllumioTrafficAnalyzer:
                             src = raw_data.get('src', {})
                             dst = raw_data.get('dst', {})
                             service = raw_data.get('service', {})
+                            rules = raw_data.get('rules', {})
+                            
+                            # Extraire les informations de règles
+                            rule_href = None
+                            rule_name = None
+                            if rules and 'sec_policy' in rules:
+                                sec_policy = rules.get('sec_policy', {})
+                                if sec_policy:
+                                    rule_href = sec_policy.get('href')
+                                    rule_name = sec_policy.get('name')
+                            
                             csv_flow = {
                                 'src_ip': src.get('ip'),
                                 'src_workload_id': src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None,
@@ -386,7 +492,9 @@ class IllumioTrafficAnalyzer:
                                 'first_detected': raw_data.get('timestamp_range', {}).get('first_detected'),
                                 'last_detected': raw_data.get('timestamp_range', {}).get('last_detected'),
                                 'num_connections': raw_data.get('num_connections'),
-                                'flow_direction': raw_data.get('flow_direction')
+                                'flow_direction': raw_data.get('flow_direction'),
+                                'rule_href': rule_href,
+                                'rule_name': rule_name
                             }
                         except json.JSONDecodeError:
                             # Si le décodage JSON échoue, utiliser les données directement

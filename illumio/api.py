@@ -117,3 +117,51 @@ class IllumioAPI(IllumioAPICore):
             # Essayer une autre approche si la première échoue
             print("Tentative alternative...")
             return self._make_request('get', f'traffic_flows/async_queries/{query_id}/result')
+    
+    def start_deep_rule_analysis(self, query_id, label_based_rules=False, offset=0, limit=100):
+        """
+        Lance une analyse de règles approfondie sur une requête de trafic existante.
+        
+        Args:
+            query_id (str): ID de la requête de trafic
+            label_based_rules (bool): Si True, utilise les règles basées sur les labels
+            offset (int): Index de départ pour les résultats
+            limit (int): Nombre maximum de résultats
+            
+        Returns:
+            bool: True si la requête a été acceptée, False sinon
+        """
+        try:
+            # Préparer les paramètres
+            params = {
+                'label_based_rules': 'true' if label_based_rules else 'false', 
+                'offset': offset, 
+                'limit': limit
+            }
+            
+            # Faire la requête PUT pour lancer l'analyse de règles
+            response = self._make_request('put', f'traffic_flows/async_queries/{query_id}/update_rules', params=params)
+            
+            # Si la réponse est vide mais le code est 202 (Accepted), c'est un succès
+            if response is True:
+                return True
+                
+            return bool(response)
+        except Exception as e:
+            print(f"Erreur lors du lancement de l'analyse de règles approfondie: {e}")
+            return False
+    
+    def get_deep_rule_analysis_results(self, query_id, offset=0, limit=5000):
+        """
+        Récupère les résultats d'une analyse de règles approfondie.
+        
+        Args:
+            query_id (str): ID de la requête de trafic
+            offset (int): Index de départ pour les résultats
+            limit (int): Nombre maximum de résultats
+            
+        Returns:
+            list: Liste des flux de trafic avec analyse de règles
+        """
+        params = {'offset': offset, 'limit': limit}
+        return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download', params=params)

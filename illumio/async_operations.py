@@ -6,7 +6,7 @@ Centralise la logique de soumission, surveillance et récupération des résulta
 import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Callable, Optional, List, Tuple
-from .exceptions import APIRequestError, TimeoutError
+from .exceptions import APIRequestError, TimeoutError, AsyncOperationError
 
 class AsyncOperation(ABC):
     """Classe abstraite pour les opérations asynchrones avec l'API Illumio."""
@@ -352,3 +352,42 @@ class TrafficAnalysisOperation(AsyncOperation):
             "max_results": max_results,
             "exclude_workloads_from_ip_list_query": True
         }
+        
+    def start_deep_rule_analysis(self, operation_id: str, label_based_rules: bool = False,
+                                offset: int = 0, limit: int = 100) -> bool:
+        """
+        Lance une analyse de règles approfondie pour une opération terminée.
+        
+        Args:
+            operation_id: Identifiant de l'opération
+            label_based_rules: Si vrai, utilise les règles basées sur les labels
+            offset: Index de départ pour les résultats
+            limit: Nombre maximum de résultats
+            
+        Returns:
+            True si l'analyse a été lancée avec succès, False sinon
+        """
+        return self.api.start_deep_rule_analysis(
+            query_id=operation_id,
+            label_based_rules=label_based_rules,
+            offset=offset,
+            limit=limit
+        )
+    
+    def get_deep_rule_analysis_results(self, operation_id: str, offset: int = 0, limit: int = 5000) -> List[Dict[str, Any]]:
+        """
+        Récupère les résultats d'une analyse de règles approfondie.
+        
+        Args:
+            operation_id: Identifiant de l'opération
+            offset: Index de départ pour les résultats
+            limit: Nombre maximum de résultats
+            
+        Returns:
+            Résultats de l'analyse de règles
+        """
+        return self.api.get_deep_rule_analysis_results(
+            query_id=operation_id,
+            offset=offset,
+            limit=limit
+        )
