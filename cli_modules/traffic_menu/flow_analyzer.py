@@ -88,13 +88,21 @@ def analyze_specific_flow(source_ip, dest_ip, protocol, port=None, perform_deep_
     if not analyzer:
         return
     
+    # Afficher un résumé des paramètres d'analyse
+    print("\nParamètres d'analyse:")
+    print(f"  Source      : {source_ip}")
+    print(f"  Destination : {dest_ip}")
+    print(f"  Protocole   : {protocol}")
+    if port:
+        print(f"  Port        : {port}")
+    print(f"  Analyse des règles: {'Oui' if perform_deep_analysis else 'Non'}")
+    
     # Créer un nom de requête spécifique
     query_name = f"Flow_{source_ip}_to_{dest_ip}_{protocol}"
     if port:
         query_name += f"_port{port}"
     
     # Créer une requête d'analyse personnalisée
-    # CORRECTION: Formater correctement selon le schéma API Illumio
     query_data = {
         "query_name": query_name,
         "start_date": (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
@@ -126,6 +134,12 @@ def analyze_specific_flow(source_ip, dest_ip, protocol, port=None, perform_deep_
     }
     
     print("\nDémarrage de l'analyse de trafic spécifique...")
+    
+    # Préciser la période de recherche
+    start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    print(f"Période d'analyse: {start_date} à {end_date} (7 derniers jours)")
+    
     if perform_deep_analysis:
         print("L'analyse de règles approfondie sera effectuée après l'analyse de trafic.")
         
@@ -141,7 +155,50 @@ def analyze_specific_flow(source_ip, dest_ip, protocol, port=None, perform_deep_
         print(f"\n✅ Analyse terminée en {duration:.2f} secondes.")
         print(f"   {len(results)} flux de trafic correspondants trouvés.")
         
-        # Afficher les résultats
-        FlowDisplayFormatter.format_flow_table(results)
+        # Vérifier s'il y a des résultats pour afficher
+        if len(results) > 0:
+            # Résumé des résultats
+            policy_decisions = {}
+            has_rules = 0
+            
+            for flow in results:
+                # Compter les décisions de politique
+                decision = flow.get('policy_decision', 'N/A')
+                if decision in policy_decisions:
+                    policy_decisions[decision] += 1
+                else:
+                    policy_decisions[decision] = 1
+                
+                # Vérifier si une règle est associée
+                if 'rules' in flow and (
+                    (isinstance(flow['rules'], dict) and 'sec_policy' in flow['rules']) or
+                    (isinstance(flow['rules'], list) and len(flow['rules']) > 0)
+                ):
+                    has_rules += 1
+            
+            # Afficher le résumé
+            print("\nRésumé des résultats:")
+            for decision, count in policy_decisions.items():
+                print(f"  - {decision}: {count} flux")
+            
+            if has_rules > 0:
+                print(f"  - {has_rules} flux avec règles identifiées ({(has_rules/len(results))*100:.1f}%)")
+            
+            # Afficher les flux détaillés
+            limit = min(20, len(results))  # Limiter à 20 résultats par défaut
+            print(f"\nDétail des {limit} premiers flux:")
+            FlowDisplayFormatter.format_flow_table(results, limit)
+            
+            # Proposer d'afficher plus de résultats si nécessaire
+            if len(results) > limit:
+                show_more = input(f"\nAfficher les {len(results) - limit} flux supplémentaires? (o/n): ").lower()
+                if show_more in ('o', 'oui', 'y', 'yes'):
+                    FlowDisplayFormatter.format_flow_table(results[limit:], len(results) - limit)
+        else:
+            print("Aucun flux correspondant trouvé dans la période spécifiée.")
     else:
         print(f"\n❌ Échec de l'analyse après {duration:.2f} secondes.")
+        print("Suggestions:")
+        print("  - Vérifiez que les adresses IP sont correctes")
+        print("  - Assurez-vous que la communication a eu lieu dans les 7 derniers jours")
+        print("  - Vérifiez la connexion à Illumio PCE")
