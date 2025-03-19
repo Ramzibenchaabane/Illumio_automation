@@ -1,3 +1,4 @@
+# illumio/database
 """
 Module de gestion de la base de données SQLite pour l'application Illumio.
 Ce fichier est maintenu pour la compatibilité et redirige vers la nouvelle
