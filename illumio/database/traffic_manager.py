@@ -4,6 +4,7 @@ Gestionnaire des analyses de trafic dans la base de données.
 """
 import sqlite3
 import json
+import time
 from ..db_utils import db_connection
 
 class TrafficManager:
@@ -135,42 +136,57 @@ class TrafficManager:
         Returns:
             bool: True si l'opération réussit, False sinon
         """
-        try:
-            with db_connection(self.db_file) as (conn, cursor):
-                # Mise à jour conditionnelle selon les statuts
-                if rules_status:
-                    # Si nous avons à la fois le statut de la requête et celui des règles
-                    if status == 'completed' and rules_status == 'completed':
-                        cursor.execute('''
-                        UPDATE traffic_queries
-                        SET status = ?, 
-                            completed_at = CURRENT_TIMESTAMP,
-                            rules_status = ?,
-                            rules_completed_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        ''', (status, rules_status, query_id))
+        max_retries = 3
+        retry_delay = 1  # secondes
+
+        for attempt in range(max_retries):
+            try:
+                with db_connection(self.db_file) as (conn, cursor):
+                    # Mise à jour conditionnelle selon les statuts
+                    if rules_status:
+                        # Si nous avons à la fois le statut de la requête et celui des règles
+                        if status == 'completed' and rules_status == 'completed':
+                            cursor.execute('''
+                            UPDATE traffic_queries
+                            SET status = ?, 
+                                completed_at = CURRENT_TIMESTAMP,
+                                rules_status = ?,
+                                rules_completed_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            ''', (status, rules_status, query_id))
+                        else:
+                            cursor.execute('''
+                            UPDATE traffic_queries
+                            SET status = ?, 
+                                completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                                rules_status = ?
+                            WHERE id = ?
+                            ''', (status, status, rules_status, query_id))
                     else:
+                        # Mise à jour du statut de la requête uniquement
                         cursor.execute('''
                         UPDATE traffic_queries
                         SET status = ?, 
-                            completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
-                            rules_status = ?
+                            completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
                         WHERE id = ?
-                        ''', (status, status, rules_status, query_id))
-                else:
-                    # Mise à jour du statut de la requête uniquement
-                    cursor.execute('''
-                    UPDATE traffic_queries
-                    SET status = ?, 
-                        completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
-                    WHERE id = ?
-                    ''', (status, status, query_id))
-            
-            return True
+                        ''', (status, status, query_id))
                 
-        except sqlite3.Error as e:
-            print(f"Erreur lors de la mise à jour du statut de la requête: {e}")
-            return False
+                return True
+                    
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    print(f"Avertissement lors de la mise à jour du statut de la requête: {e}")
+                    print(f"Tentative {attempt+1}/{max_retries}, nouvelle tentative dans {retry_delay} secondes...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Backoff exponentiel
+                else:
+                    print(f"Erreur lors de la mise à jour du statut de la requête: {e}")
+                    return False
+            except sqlite3.Error as e:
+                print(f"Erreur lors de la mise à jour du statut de la requête: {e}")
+                return False
+        
+        return False
     
     def update_query_rules_status(self, query_id, rules_status):
         """Met à jour le statut des règles d'une requête de trafic asynchrone.
@@ -182,22 +198,37 @@ class TrafficManager:
         Returns:
             bool: True si l'opération réussit, False sinon
         """
-        try:
-            with db_connection(self.db_file) as (conn, cursor):
-                cursor.execute('''
-                UPDATE traffic_queries
-                SET rules_status = ?,
-                    rules_completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE rules_completed_at END
-                WHERE id = ?
-                ''', (rules_status, rules_status, query_id))
-            
-            return True
+        max_retries = 3
+        retry_delay = 1  # secondes
+
+        for attempt in range(max_retries):
+            try:
+                with db_connection(self.db_file) as (conn, cursor):
+                    cursor.execute('''
+                    UPDATE traffic_queries
+                    SET rules_status = ?,
+                        rules_completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE rules_completed_at END
+                    WHERE id = ?
+                    ''', (rules_status, rules_status, query_id))
                 
-        except sqlite3.Error as e:
-            print(f"Erreur lors de la mise à jour du statut des règles: {e}")
-            return False
+                return True
+                    
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    print(f"Avertissement lors de la mise à jour du statut des règles: {e}")
+                    print(f"Tentative {attempt+1}/{max_retries}, nouvelle tentative dans {retry_delay} secondes...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Backoff exponentiel
+                else:
+                    print(f"Erreur lors de la mise à jour du statut des règles: {e}")
+                    return False
+            except sqlite3.Error as e:
+                print(f"Erreur lors de la mise à jour du statut des règles: {e}")
+                return False
+        
+        return False
     
-    def store_flows(self, query_id, flows):
+    def store_traffic_flows(self, query_id, flows):
         """Stocke les résultats d'une requête de trafic asynchrone.
         
         Args:
@@ -207,78 +238,156 @@ class TrafficManager:
         Returns:
             bool: True si l'opération réussit, False sinon
         """
-        try:
-            with db_connection(self.db_file) as (conn, cursor):
-                # Supprimer les flux existants pour cette requête
-                cursor.execute("DELETE FROM traffic_flows WHERE query_id = ?", (query_id,))
+        max_retries = 3
+        retry_delay = 1  # secondes
+
+        for attempt in range(max_retries):
+            try:
+                with db_connection(self.db_file) as (conn, cursor):
+                    # Définir un timeout plus long pour la base de données
+                    conn.execute("PRAGMA busy_timeout = 10000")  # 10 secondes de timeout
+                    
+                    # Supprimer les flux existants pour cette requête
+                    cursor.execute("DELETE FROM traffic_flows WHERE query_id = ?", (query_id,))
+                    
+                    # Traiter chaque flux
+                    for flow in flows:
+                        # Extraire les informations source et destination
+                        src = flow.get('src', {})
+                        dst = flow.get('dst', {})
+                        service = flow.get('service', {})
+                        timestamp_range = flow.get('timestamp_range', {})
+                        
+                        # Extraire les informations de règles si disponibles
+                        rules = flow.get('rules', {})
+                        rule_href = None
+                        rule_name = None
+                        rule_sec_policy = None
+                        
+                        # Gérer les deux formats de rules (dict avec sec_policy ou liste de règles)
+                        if isinstance(rules, dict) and 'sec_policy' in rules:
+                            # Ancien format (avant update_rules)
+                            sec_policy = rules.get('sec_policy', {})
+                            if sec_policy:
+                                rule_href = sec_policy.get('href')
+                                rule_name = sec_policy.get('name')
+                                rule_sec_policy = json.dumps(sec_policy)
+                        elif isinstance(rules, list) and len(rules) > 0:
+                            # Nouveau format (après update_rules) - liste d'objets rule
+                            rule = rules[0]  # Prendre la première règle
+                            rule_href = rule.get('href')
+                            # Note: Le nom de la règle n'est pas disponible dans ce format
+                            rule_sec_policy = json.dumps(rule)
+                        
+                        # Extraire les IDs des workloads s'ils existent
+                        src_workload_id = src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None
+                        dst_workload_id = dst.get('workload', {}).get('href', '').split('/')[-1] if dst.get('workload', {}).get('href') else None
+                        
+                        try:
+                            cursor.execute('''
+                            INSERT INTO traffic_flows 
+                            (query_id, src_ip, src_workload_id, dst_ip, dst_workload_id, 
+                            service, port, protocol, policy_decision, first_detected, 
+                            last_detected, num_connections, flow_direction, rule_href,
+                            rule_name, rule_sec_policy, raw_data)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (
+                                query_id,
+                                src.get('ip'),
+                                src_workload_id,
+                                dst.get('ip'),
+                                dst_workload_id,
+                                service.get('name'),
+                                service.get('port'),
+                                service.get('proto'),
+                                flow.get('policy_decision'),
+                                timestamp_range.get('first_detected'),
+                                timestamp_range.get('last_detected'),
+                                flow.get('num_connections'),
+                                flow.get('flow_direction'),
+                                rule_href,
+                                rule_name,
+                                rule_sec_policy,
+                                json.dumps(flow)
+                            ))
+                        except sqlite3.OperationalError as e:
+                            if "database is locked" in str(e):
+                                # Attendre et réessayer cette insertion
+                                time.sleep(0.5)
+                                cursor.execute('''
+                                INSERT INTO traffic_flows 
+                                (query_id, src_ip, src_workload_id, dst_ip, dst_workload_id, 
+                                service, port, protocol, policy_decision, first_detected, 
+                                last_detected, num_connections, flow_direction, rule_href,
+                                rule_name, rule_sec_policy, raw_data)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ''', (
+                                    query_id,
+                                    src.get('ip'),
+                                    src_workload_id,
+                                    dst.get('ip'),
+                                    dst_workload_id,
+                                    service.get('name'),
+                                    service.get('port'),
+                                    service.get('proto'),
+                                    flow.get('policy_decision'),
+                                    timestamp_range.get('first_detected'),
+                                    timestamp_range.get('last_detected'),
+                                    flow.get('num_connections'),
+                                    flow.get('flow_direction'),
+                                    rule_href,
+                                    rule_name,
+                                    rule_sec_policy,
+                                    json.dumps(flow)
+                                ))
+                            else:
+                                raise
+                    
+                    # Mettre à jour le statut de la requête en dehors de la boucle avec délai pour éviter les verrouillages
+                    time.sleep(0.5)
+                    try:
+                        # Utiliser la méthode déjà renforcée pour update_query_status
+                        self.update_query_status(
+                            query_id, 
+                            'completed', 
+                            rules_status='completed' if any(
+                                isinstance(flow.get('rules'), dict) and 'sec_policy' in flow.get('rules') or 
+                                isinstance(flow.get('rules'), list) and len(flow.get('rules')) > 0 
+                                for flow in flows
+                            ) else None
+                        )
+                    except sqlite3.OperationalError as e:
+                        if "database is locked" in str(e):
+                            # Si l'erreur persiste, on force un délai plus important
+                            time.sleep(2)
+                            self.update_query_status(
+                                query_id, 
+                                'completed', 
+                                rules_status='completed' if any(
+                                    isinstance(flow.get('rules'), dict) and 'sec_policy' in flow.get('rules') or 
+                                    isinstance(flow.get('rules'), list) and len(flow.get('rules')) > 0 
+                                    for flow in flows
+                                ) else None
+                            )
+                        else:
+                            raise
                 
-                for flow in flows:
-                    # Extraire les informations source et destination
-                    src = flow.get('src', {})
-                    dst = flow.get('dst', {})
-                    service = flow.get('service', {})
-                    timestamp_range = flow.get('timestamp_range', {})
-                    
-                    # Extraire les informations de règles si disponibles
-                    rules = flow.get('rules', {})
-                    rule_href = None
-                    rule_name = None
-                    rule_sec_policy = None
-                    
-                    # Gérer les deux formats de rules (dict avec sec_policy ou liste de règles)
-                    if isinstance(rules, dict) and 'sec_policy' in rules:
-                        # Ancien format (avant update_rules)
-                        sec_policy = rules.get('sec_policy', {})
-                        if sec_policy:
-                            rule_href = sec_policy.get('href')
-                            rule_name = sec_policy.get('name')
-                            rule_sec_policy = json.dumps(sec_policy)
-                    elif isinstance(rules, list) and len(rules) > 0:
-                        # Nouveau format (après update_rules) - liste d'objets rule
-                        rule = rules[0]  # Prendre la première règle
-                        rule_href = rule.get('href')
-                        # Note: Le nom de la règle n'est pas disponible dans ce format
-                        rule_sec_policy = json.dumps(rule)
-                    
-                    # Extraire les IDs des workloads s'ils existent
-                    src_workload_id = src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None
-                    dst_workload_id = dst.get('workload', {}).get('href', '').split('/')[-1] if dst.get('workload', {}).get('href') else None
-                    
-                    cursor.execute('''
-                    INSERT INTO traffic_flows 
-                    (query_id, src_ip, src_workload_id, dst_ip, dst_workload_id, 
-                    service, port, protocol, policy_decision, first_detected, 
-                    last_detected, num_connections, flow_direction, rule_href,
-                    rule_name, rule_sec_policy, raw_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        query_id,
-                        src.get('ip'),
-                        src_workload_id,
-                        dst.get('ip'),
-                        dst_workload_id,
-                        service.get('name'),
-                        service.get('port'),
-                        service.get('proto'),
-                        flow.get('policy_decision'),
-                        timestamp_range.get('first_detected'),
-                        timestamp_range.get('last_detected'),
-                        flow.get('num_connections'),
-                        flow.get('flow_direction'),
-                        rule_href,
-                        rule_name,
-                        rule_sec_policy,
-                        json.dumps(flow)
-                    ))
+                return True
                 
-                # Mettre à jour le statut de la requête
-                self.update_query_status(query_id, 'completed', rules_status='completed' if rules else None)
-            
-            return True
-                
-        except sqlite3.Error as e:
-            print(f"Erreur lors du stockage des flux de trafic: {e}")
-            return False
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    print(f"Avertissement lors du stockage des flux de trafic: {e}")
+                    print(f"Tentative {attempt+1}/{max_retries}, nouvelle tentative dans {retry_delay} secondes...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Backoff exponentiel
+                else:
+                    print(f"Erreur lors du stockage des flux de trafic: {e}")
+                    return False
+            except sqlite3.Error as e:
+                print(f"Erreur lors du stockage des flux de trafic: {e}")
+                return False
+        
+        return False
     
     def get_queries(self, status=None):
         """Récupère les requêtes de trafic asynchrones avec filtre optionnel sur le statut.

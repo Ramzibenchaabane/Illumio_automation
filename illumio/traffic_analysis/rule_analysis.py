@@ -56,7 +56,24 @@ class DeepRuleAnalyzer(TrafficAnalysisBaseComponent):
             
             # Update query rules status in database
             if self.save_to_db:
-                self.db.update_traffic_query_rules_status(query_id, 'working')
+                try:
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            if self.db.update_traffic_query_rules_status(query_id, 'working'):
+                                break
+                            else:
+                                if attempt < max_retries - 1:
+                                    print(f"Échec de mise à jour du statut des règles, tentative {attempt+1}/{max_retries}")
+                                    time.sleep(1 * (2 ** attempt))  # Exponential backoff
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                print(f"Erreur lors de la mise à jour du statut des règles: {e}, tentative {attempt+1}/{max_retries}")
+                                time.sleep(1 * (2 ** attempt))  # Exponential backoff
+                            else:
+                                print(f"Erreur lors de la mise à jour du statut des règles après plusieurs tentatives: {e}")
+                except Exception as e:
+                    print(f"Erreur lors du processus de retry: {e}")
             
             # Monitor rule analysis status
             print("Surveillance de l'état de l'analyse de règles...")
@@ -82,7 +99,23 @@ class DeepRuleAnalyzer(TrafficAnalysisBaseComponent):
                     
                     # Update rules status in database
                     if self.save_to_db:
-                        self.db.update_traffic_query_rules_status(query_id, rules_status)
+                        try:
+                            # Use exponential backoff for database updates
+                            max_db_retries = 3
+                            for db_attempt in range(max_db_retries):
+                                try:
+                                    if self.db.update_traffic_query_rules_status(query_id, rules_status):
+                                        break
+                                    elif db_attempt < max_db_retries - 1:
+                                        time.sleep(0.5 * (2 ** db_attempt))
+                                except Exception as e:
+                                    if db_attempt < max_db_retries - 1:
+                                        print(f"Erreur de base de données: {e}, tentative {db_attempt+1}/{max_db_retries}")
+                                        time.sleep(0.5 * (2 ** db_attempt))
+                                    else:
+                                        print(f"Erreur de base de données après plusieurs tentatives: {e}")
+                        except Exception as e:
+                            print(f"Erreur lors de la mise à jour du statut des règles: {e}")
                     
                     # Check if analysis is complete
                     if rules_status == 'completed':

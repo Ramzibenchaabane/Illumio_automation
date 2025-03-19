@@ -127,14 +127,35 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
             # Store initial results in database
             if self.save_to_db and query_id:
                 print("Storing initial results in database...")
-                if self.db.store_traffic_flows(query_id, results):
-                    print("✅ Initial results stored successfully.")
-                else:
-                    print("❌ Error storing initial results.")
+                try:
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            if self.db.store_traffic_flows(query_id, results):
+                                print("✅ Initial results stored successfully.")
+                                break
+                            else:
+                                if attempt < max_retries - 1:
+                                    print(f"❌ Error storing initial results, retry {attempt+1}/{max_retries}")
+                                    time.sleep(2 ** attempt)  # Exponential backoff
+                                else:
+                                    print("❌ Error storing initial results after retries.")
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                print(f"❌ Error storing initial results: {e}, retry {attempt+1}/{max_retries}")
+                                time.sleep(2 ** attempt)  # Exponential backoff
+                            else:
+                                print(f"❌ Error storing initial results after retries: {e}")
+                except Exception as e:
+                    print(f"❌ Error during retry process: {e}")
+                    # Continue the process even if storage fails
             
             # Perform deep rule analysis if requested
             if perform_deep_analysis:
                 print("\nLaunching deep rule analysis...")
+                # Add a small delay before starting deep rule analysis to avoid DB locks
+                time.sleep(2)
+                
                 deep_results = self.rule_analyzer.perform_deep_rule_analysis(query_id)
                 
                 if deep_results:
@@ -145,10 +166,29 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
                     # Store enriched results in database
                     if self.save_to_db and query_id:
                         print("Updating results with rule information...")
-                        if self.db.store_traffic_flows(query_id, results):
-                            print("✅ Enriched results stored successfully.")
-                        else:
-                            print("❌ Error storing enriched results.")
+                        try:
+                            # Add a retry mechanism for database updates
+                            max_retries = 3
+                            for attempt in range(max_retries):
+                                try:
+                                    if self.db.store_traffic_flows(query_id, results):
+                                        print("✅ Enriched results stored successfully.")
+                                        break
+                                    else:
+                                        if attempt < max_retries - 1:
+                                            print(f"❌ Error storing enriched results, retry {attempt+1}/{max_retries}")
+                                            time.sleep(2 ** attempt)  # Exponential backoff
+                                        else:
+                                            print("❌ Error storing enriched results after retries.")
+                                except Exception as e:
+                                    if attempt < max_retries - 1:
+                                        print(f"❌ Error storing enriched results: {e}, retry {attempt+1}/{max_retries}")
+                                        time.sleep(2 ** attempt)  # Exponential backoff
+                                    else:
+                                        print(f"❌ Error storing enriched results after retries: {e}")
+                        except Exception as e:
+                            print(f"❌ Failed to store enriched results: {e}")
+                            # Continue the process even if storage fails
                 else:
                     print("⚠️ Deep rule analysis did not complete, using base results.")
             
@@ -171,61 +211,3 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
             import traceback
             print(traceback.format_exc())
             return False
-    
-    def get_queries(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Retrieve existing traffic queries.
-        
-        Args:
-            status (str, optional): Filter by query status
-        
-        Returns:
-            List of traffic query details
-        """
-        if not self.save_to_db:
-            print("Database is disabled, cannot retrieve queries.")
-            return []
-        
-        return self.db.get_traffic_queries(status)
-    
-    def get_flows(self, query_id: str) -> List[Dict[str, Any]]:
-        """
-        Retrieve traffic flows for a specific query.
-        
-        Args:
-            query_id (str): ID of the traffic query
-        
-        Returns:
-            List of traffic flows
-        """
-        if not self.save_to_db:
-            print("Database is disabled, cannot retrieve flows.")
-            return []
-        
-        return self.db.get_traffic_flows(query_id)
-    
-    def export_flows(self, 
-                     query_id: str, 
-                     format_type: str = 'json', 
-                     output_file: Optional[str] = None) -> bool:
-        """
-        Export traffic flows for a specific query.
-        
-        Args:
-            query_id (str): ID of the traffic query
-            format_type (str): Export format ('json' or 'csv')
-            output_file (str, optional): Custom output filename
-        
-        Returns:
-            bool: True if export successful
-        """
-        if not self.save_to_db:
-            print("Database is disabled, cannot export flows.")
-            return False
-        
-        # Delegate to export handler
-        return self.export_handler.export_query_results(
-            query_id, 
-            format_type, 
-            output_file
-        )

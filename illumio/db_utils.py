@@ -8,12 +8,13 @@ import json
 from contextlib import contextmanager
 
 @contextmanager
-def db_connection(db_file):
+def db_connection(db_file, timeout=30.0):
     """
     Gestionnaire de contexte pour les connexions à la base de données.
     
     Args:
         db_file (str): Chemin vers le fichier de base de données
+        timeout (float): Temps d'attente maximum en secondes pour acquérir un verrou
         
     Yields:
         tuple: (connection, cursor) pour la base de données
@@ -26,8 +27,9 @@ def db_connection(db_file):
     # Assurer que le répertoire existe
     os.makedirs(os.path.dirname(db_file), exist_ok=True)
     
-    # Créer la connexion
-    conn = sqlite3.connect(db_file)
+    # Créer la connexion avec un timeout
+    conn = sqlite3.connect(db_file, timeout=timeout)
+    conn.execute("PRAGMA busy_timeout = 10000")  # 10 secondes de timeout
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
