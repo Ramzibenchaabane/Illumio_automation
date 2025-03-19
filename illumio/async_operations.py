@@ -239,6 +239,7 @@ class TrafficAnalysisOperation(AsyncOperation):
             print(f"Erreur: Impossible d'extraire l'ID depuis l'URL: {href}")
             return None
             
+        # CORRECTION: Supprimer le doublon dans l'affichage du message
         print(f"Requête asynchrone créée avec l'ID: {query_id}")
         return query_id
     

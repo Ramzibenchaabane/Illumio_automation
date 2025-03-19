@@ -3,6 +3,7 @@
 Main traffic analysis orchestration class.
 """
 import time
+import random
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Callable, Union, List, Tuple
 
@@ -113,6 +114,8 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
             
             # Update query ID in database
             if self.save_to_db:
+                # Attendre un peu avant de mettre à jour la base de données
+                time.sleep(0.5)
                 self.db.update_traffic_query_id(temp_id, query_id)
             
             # Execute the query and get results
@@ -128,23 +131,27 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
             if self.save_to_db and query_id:
                 print("Storing initial results in database...")
                 try:
-                    max_retries = 3
+                    # Attendre un peu avant de stocker les résultats
+                    time.sleep(1)
+                    
+                    max_retries = 5
                     for attempt in range(max_retries):
                         try:
-                            # Correction ici : Utilisation de store_traffic_flows au lieu de store_flows
                             if self.db.store_traffic_flows(query_id, results):
                                 print("✅ Initial results stored successfully.")
                                 break
                             else:
                                 if attempt < max_retries - 1:
-                                    print(f"❌ Error storing initial results, retry {attempt+1}/{max_retries}")
-                                    time.sleep(2 ** attempt)  # Exponential backoff
+                                    wait_time = (2 ** attempt) * 1.0 + random.uniform(0, 0.5)
+                                    print(f"❌ Error storing initial results, retry {attempt+1}/{max_retries} in {wait_time:.2f}s...")
+                                    time.sleep(wait_time)
                                 else:
                                     print("❌ Error storing initial results after retries.")
                         except Exception as e:
                             if attempt < max_retries - 1:
-                                print(f"❌ Error storing initial results: {e}, retry {attempt+1}/{max_retries}")
-                                time.sleep(2 ** attempt)  # Exponential backoff
+                                wait_time = (2 ** attempt) * 1.0 + random.uniform(0, 0.5)
+                                print(f"❌ Error storing initial results: {e}, retry {attempt+1}/{max_retries} in {wait_time:.2f}s...")
+                                time.sleep(wait_time)
                             else:
                                 print(f"❌ Error storing initial results after retries: {e}")
                 except Exception as e:
@@ -154,8 +161,8 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
             # Perform deep rule analysis if requested
             if perform_deep_analysis:
                 print("\nLaunching deep rule analysis...")
-                # Add a small delay before starting deep rule analysis to avoid DB locks
-                time.sleep(2)
+                # Add a delay before starting deep rule analysis to avoid DB locks
+                time.sleep(3)
                 
                 deep_results = self.rule_analyzer.perform_deep_rule_analysis(query_id)
                 
@@ -168,24 +175,28 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
                     if self.save_to_db and query_id:
                         print("Updating results with rule information...")
                         try:
+                            # Attendre un peu avant de stocker les résultats enrichis
+                            time.sleep(1)
+                            
                             # Add a retry mechanism for database updates
-                            max_retries = 3
+                            max_retries = 5
                             for attempt in range(max_retries):
                                 try:
-                                    # Correction ici : Utilisation de store_traffic_flows au lieu de store_flows
                                     if self.db.store_traffic_flows(query_id, results):
                                         print("✅ Enriched results stored successfully.")
                                         break
                                     else:
                                         if attempt < max_retries - 1:
-                                            print(f"❌ Error storing enriched results, retry {attempt+1}/{max_retries}")
-                                            time.sleep(2 ** attempt)  # Exponential backoff
+                                            wait_time = (2 ** attempt) * 1.0 + random.uniform(0, 0.5)
+                                            print(f"❌ Error storing enriched results, retry {attempt+1}/{max_retries} in {wait_time:.2f}s...")
+                                            time.sleep(wait_time)
                                         else:
                                             print("❌ Error storing enriched results after retries.")
                                 except Exception as e:
                                     if attempt < max_retries - 1:
-                                        print(f"❌ Error storing enriched results: {e}, retry {attempt+1}/{max_retries}")
-                                        time.sleep(2 ** attempt)  # Exponential backoff
+                                        wait_time = (2 ** attempt) * 1.0 + random.uniform(0, 0.5)
+                                        print(f"❌ Error storing enriched results: {e}, retry {attempt+1}/{max_retries} in {wait_time:.2f}s...")
+                                        time.sleep(wait_time)
                                     else:
                                         print(f"❌ Error storing enriched results after retries: {e}")
                         except Exception as e:

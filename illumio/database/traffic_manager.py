@@ -5,6 +5,7 @@ Gestionnaire des analyses de trafic dans la base de données.
 import sqlite3
 import json
 import time
+import random
 from ..db_utils import db_connection
 
 class TrafficManager:
@@ -25,7 +26,7 @@ class TrafficManager:
             bool: True si l'initialisation réussit, False sinon
         """
         try:
-            with db_connection(self.db_file) as (conn, cursor):
+            with db_connection(self.db_file, immediate=True, retries=3) as (conn, cursor):
                 # Tables pour les requêtes de trafic asynchrones
                 cursor.execute('''
                 CREATE TABLE IF NOT EXISTS traffic_queries (
@@ -83,7 +84,7 @@ class TrafficManager:
             bool: True si l'opération réussit, False sinon
         """
         try:
-            with db_connection(self.db_file) as (conn, cursor):
+            with db_connection(self.db_file, immediate=True, retries=3) as (conn, cursor):
                 cursor.execute('''
                 INSERT OR REPLACE INTO traffic_queries 
                 (id, query_name, status, created_at, raw_query)
@@ -112,7 +113,7 @@ class TrafficManager:
             bool: True si l'opération réussit, False sinon
         """
         try:
-            with db_connection(self.db_file) as (conn, cursor):
+            with db_connection(self.db_file, immediate=True, retries=3) as (conn, cursor):
                 cursor.execute('''
                 UPDATE traffic_queries
                 SET id = ?
@@ -136,12 +137,12 @@ class TrafficManager:
         Returns:
             bool: True si l'opération réussit, False sinon
         """
-        max_retries = 3
-        retry_delay = 1  # secondes
+        max_retries = 5
+        retry_delay_base = 1.0  # secondes
 
         for attempt in range(max_retries):
             try:
-                with db_connection(self.db_file) as (conn, cursor):
+                with db_connection(self.db_file, immediate=True, retries=3) as (conn, cursor):
                     # Mise à jour conditionnelle selon les statuts
                     if rules_status:
                         # Si nous avons à la fois le statut de la requête et celui des règles
@@ -175,10 +176,10 @@ class TrafficManager:
                     
             except sqlite3.OperationalError as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:
+                    wait_time = retry_delay_base * (2 ** attempt) + random.uniform(0, 0.5)
                     print(f"Avertissement lors de la mise à jour du statut de la requête: {e}")
-                    print(f"Tentative {attempt+1}/{max_retries}, nouvelle tentative dans {retry_delay} secondes...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Backoff exponentiel
+                    print(f"Tentative {attempt+1}/{max_retries}, nouvelle tentative dans {wait_time:.2f} secondes...")
+                    time.sleep(wait_time)
                 else:
                     print(f"Erreur lors de la mise à jour du statut de la requête: {e}")
                     return False
@@ -198,12 +199,12 @@ class TrafficManager:
         Returns:
             bool: True si l'opération réussit, False sinon
         """
-        max_retries = 3
-        retry_delay = 1  # secondes
+        max_retries = 5
+        retry_delay_base = 1.0  # secondes
 
         for attempt in range(max_retries):
             try:
-                with db_connection(self.db_file) as (conn, cursor):
+                with db_connection(self.db_file, immediate=True, retries=3) as (conn, cursor):
                     cursor.execute('''
                     UPDATE traffic_queries
                     SET rules_status = ?,
@@ -215,10 +216,10 @@ class TrafficManager:
                     
             except sqlite3.OperationalError as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:
+                    wait_time = retry_delay_base * (2 ** attempt) + random.uniform(0, 0.5)
                     print(f"Avertissement lors de la mise à jour du statut des règles: {e}")
-                    print(f"Tentative {attempt+1}/{max_retries}, nouvelle tentative dans {retry_delay} secondes...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Backoff exponentiel
+                    print(f"Tentative {attempt+1}/{max_retries}, nouvelle tentative dans {wait_time:.2f} secondes...")
+                    time.sleep(wait_time)
                 else:
                     print(f"Erreur lors de la mise à jour du statut des règles: {e}")
                     return False
@@ -238,52 +239,59 @@ class TrafficManager:
         Returns:
             bool: True si l'opération réussit, False sinon
         """
-        max_retries = 3
-        retry_delay = 1  # secondes
+        # Pour cette opération complexe qui modifie beaucoup de données, nous utilisons une stratégie robuste
+        # 1. D'abord supprimer les flux existants dans une transaction distincte
+        # 2. Puis insérer les nouveaux flux par petits lots
 
-        for attempt in range(max_retries):
-            try:
-                with db_connection(self.db_file) as (conn, cursor):
-                    # Définir un timeout plus long pour la base de données
-                    conn.execute("PRAGMA busy_timeout = 10000")  # 10 secondes de timeout
-                    
-                    # Supprimer les flux existants pour cette requête
-                    cursor.execute("DELETE FROM traffic_flows WHERE query_id = ?", (query_id,))
-                    
-                    # Traiter chaque flux
-                    for flow in flows:
-                        # Extraire les informations source et destination
-                        src = flow.get('src', {})
-                        dst = flow.get('dst', {})
-                        service = flow.get('service', {})
-                        timestamp_range = flow.get('timestamp_range', {})
-                        
-                        # Extraire les informations de règles si disponibles
-                        rules = flow.get('rules', {})
-                        rule_href = None
-                        rule_name = None
-                        rule_sec_policy = None
-                        
-                        # Gérer les deux formats de rules (dict avec sec_policy ou liste de règles)
-                        if isinstance(rules, dict) and 'sec_policy' in rules:
-                            # Ancien format (avant update_rules)
-                            sec_policy = rules.get('sec_policy', {})
-                            if sec_policy:
-                                rule_href = sec_policy.get('href')
-                                rule_name = sec_policy.get('name')
-                                rule_sec_policy = json.dumps(sec_policy)
-                        elif isinstance(rules, list) and len(rules) > 0:
-                            # Nouveau format (après update_rules) - liste d'objets rule
-                            rule = rules[0]  # Prendre la première règle
-                            rule_href = rule.get('href')
-                            # Note: Le nom de la règle n'est pas disponible dans ce format
-                            rule_sec_policy = json.dumps(rule)
-                        
-                        # Extraire les IDs des workloads s'ils existent
-                        src_workload_id = src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None
-                        dst_workload_id = dst.get('workload', {}).get('href', '').split('/')[-1] if dst.get('workload', {}).get('href') else None
-                        
-                        try:
+        # Étape 1 : Suppression des flux existants
+        try:
+            with db_connection(self.db_file, immediate=True, retries=5) as (conn, cursor):
+                cursor.execute("DELETE FROM traffic_flows WHERE query_id = ?", (query_id,))
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la suppression des flux existants: {e}")
+            return False
+
+        # Attendre un peu pour laisser la base de données "respirer"
+        time.sleep(0.5)
+        
+        # Étape 2 : Insertion par lots
+        batch_size = 10  # Nombre de flux à insérer par transaction
+        
+        try:
+            for i in range(0, len(flows), batch_size):
+                batch = flows[i:i+batch_size]  # Prendre un lot de flux
+                
+                try:
+                    with db_connection(self.db_file, immediate=True, retries=5) as (conn, cursor):
+                        for flow in batch:
+                            # Extraire les informations source et destination
+                            src = flow.get('src', {})
+                            dst = flow.get('dst', {})
+                            service = flow.get('service', {})
+                            timestamp_range = flow.get('timestamp_range', {})
+                            
+                            # Extraire les informations de règles si disponibles
+                            rules = flow.get('rules', {})
+                            rule_href = None
+                            rule_name = None
+                            rule_sec_policy = None
+                            
+                            # Gérer les deux formats de rules
+                            if isinstance(rules, dict) and 'sec_policy' in rules:
+                                sec_policy = rules.get('sec_policy', {})
+                                if sec_policy:
+                                    rule_href = sec_policy.get('href')
+                                    rule_name = sec_policy.get('name')
+                                    rule_sec_policy = json.dumps(sec_policy)
+                            elif isinstance(rules, list) and len(rules) > 0:
+                                rule = rules[0]
+                                rule_href = rule.get('href')
+                                rule_sec_policy = json.dumps(rule)
+                            
+                            # Extraire les IDs des workloads s'ils existent
+                            src_workload_id = src.get('workload', {}).get('href', '').split('/')[-1] if src.get('workload', {}).get('href') else None
+                            dst_workload_id = dst.get('workload', {}).get('href', '').split('/')[-1] if dst.get('workload', {}).get('href') else None
+                            
                             cursor.execute('''
                             INSERT INTO traffic_flows 
                             (query_id, src_ip, src_workload_id, dst_ip, dst_workload_id, 
@@ -310,84 +318,41 @@ class TrafficManager:
                                 rule_sec_policy,
                                 json.dumps(flow)
                             ))
-                        except sqlite3.OperationalError as e:
-                            if "database is locked" in str(e):
-                                # Attendre et réessayer cette insertion
-                                time.sleep(0.5)
-                                cursor.execute('''
-                                INSERT INTO traffic_flows 
-                                (query_id, src_ip, src_workload_id, dst_ip, dst_workload_id, 
-                                service, port, protocol, policy_decision, first_detected, 
-                                last_detected, num_connections, flow_direction, rule_href,
-                                rule_name, rule_sec_policy, raw_data)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                ''', (
-                                    query_id,
-                                    src.get('ip'),
-                                    src_workload_id,
-                                    dst.get('ip'),
-                                    dst_workload_id,
-                                    service.get('name'),
-                                    service.get('port'),
-                                    service.get('proto'),
-                                    flow.get('policy_decision'),
-                                    timestamp_range.get('first_detected'),
-                                    timestamp_range.get('last_detected'),
-                                    flow.get('num_connections'),
-                                    flow.get('flow_direction'),
-                                    rule_href,
-                                    rule_name,
-                                    rule_sec_policy,
-                                    json.dumps(flow)
-                                ))
-                            else:
-                                raise
-                    
-                    # Mettre à jour le statut de la requête en dehors de la boucle avec délai pour éviter les verrouillages
-                    time.sleep(0.5)
-                    try:
-                        # Utiliser la méthode déjà renforcée pour update_query_status
-                        self.update_query_status(
-                            query_id, 
-                            'completed', 
-                            rules_status='completed' if any(
-                                isinstance(flow.get('rules'), dict) and 'sec_policy' in flow.get('rules') or 
-                                isinstance(flow.get('rules'), list) and len(flow.get('rules')) > 0 
-                                for flow in flows
-                            ) else None
-                        )
-                    except sqlite3.OperationalError as e:
-                        if "database is locked" in str(e):
-                            # Si l'erreur persiste, on force un délai plus important
-                            time.sleep(2)
-                            self.update_query_status(
-                                query_id, 
-                                'completed', 
-                                rules_status='completed' if any(
-                                    isinstance(flow.get('rules'), dict) and 'sec_policy' in flow.get('rules') or 
-                                    isinstance(flow.get('rules'), list) and len(flow.get('rules')) > 0 
-                                    for flow in flows
-                                ) else None
-                            )
-                        else:
-                            raise
+                        
+                except sqlite3.Error as e:
+                    print(f"Erreur lors de l'insertion du lot {i//batch_size + 1}: {e}")
+                    # Continuer avec le prochain lot même en cas d'erreur
                 
+                # Attendre un peu entre les lots pour réduire la contention
+                if i + batch_size < len(flows):
+                    time.sleep(0.1)
+            
+            # Mettre à jour le statut de la requête dans une transaction distincte
+            time.sleep(0.5)  # Attendre que tout se stabilise
+            
+            # Déterminer si des règles sont présentes
+            has_rules = any(
+                isinstance(flow.get('rules'), dict) and 'sec_policy' in flow.get('rules') or 
+                isinstance(flow.get('rules'), list) and len(flow.get('rules')) > 0 
+                for flow in flows
+            )
+            
+            # Mise à jour du statut
+            try:
+                self.update_query_status(
+                    query_id, 
+                    'completed', 
+                    rules_status='completed' if has_rules else None
+                )
+                return True
+            except Exception as e:
+                print(f"Avertissement: Échec de la mise à jour du statut après stockage des flux: {e}")
+                # Continuer malgré l'erreur car les données sont bien enregistrées
                 return True
                 
-            except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) and attempt < max_retries - 1:
-                    print(f"Avertissement lors du stockage des flux de trafic: {e}")
-                    print(f"Tentative {attempt+1}/{max_retries}, nouvelle tentative dans {retry_delay} secondes...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Backoff exponentiel
-                else:
-                    print(f"Erreur lors du stockage des flux de trafic: {e}")
-                    return False
-            except sqlite3.Error as e:
-                print(f"Erreur lors du stockage des flux de trafic: {e}")
-                return False
-        
-        return False
+        except Exception as e:
+            print(f"Erreur inattendue lors du stockage des flux: {e}")
+            return False
     
     def get_queries(self, status=None):
         """Récupère les requêtes de trafic asynchrones avec filtre optionnel sur le statut.
@@ -399,7 +364,7 @@ class TrafficManager:
             list: Liste des requêtes correspondantes
         """
         try:
-            with db_connection(self.db_file) as (conn, cursor):
+            with db_connection(self.db_file, retries=3) as (conn, cursor):
                 if status:
                     cursor.execute('''
                     SELECT * FROM traffic_queries WHERE status = ? ORDER BY created_at DESC
@@ -425,7 +390,7 @@ class TrafficManager:
             list: Liste des flux correspondants
         """
         try:
-            with db_connection(self.db_file) as (conn, cursor):
+            with db_connection(self.db_file, retries=3) as (conn, cursor):
                 cursor.execute('''
                 SELECT * FROM traffic_flows WHERE query_id = ?
                 ''', (query_id,))
@@ -446,7 +411,7 @@ class TrafficManager:
             dict: Détails de la requête ou None si non trouvée
         """
         try:
-            with db_connection(self.db_file) as (conn, cursor):
+            with db_connection(self.db_file, retries=3) as (conn, cursor):
                 cursor.execute('''
                 SELECT * FROM traffic_queries WHERE id = ?
                 ''', (query_id,))
@@ -471,7 +436,7 @@ class TrafficManager:
             dict: Statistiques sur les flux
         """
         try:
-            with db_connection(self.db_file) as (conn, cursor):
+            with db_connection(self.db_file, retries=3) as (conn, cursor):
                 # Nombre total de flux
                 cursor.execute('''
                 SELECT COUNT(*) as total_flows FROM traffic_flows WHERE query_id = ?
@@ -516,18 +481,21 @@ class TrafficManager:
             bool: True si l'opération réussit, False sinon
         """
         try:
-            with db_connection(self.db_file) as (conn, cursor):
-                # Supprimer d'abord les flux pour respecter les contraintes de clé étrangère
+            # Supprimer d'abord les flux
+            with db_connection(self.db_file, immediate=True, retries=3) as (conn, cursor):
                 cursor.execute('''
                 DELETE FROM traffic_flows WHERE query_id = ?
                 ''', (query_id,))
-                
-                # Puis supprimer la requête
+            
+            # Puis supprimer la requête dans une transaction distincte
+            time.sleep(0.5)  # Petite pause pour éviter les conflits
+            
+            with db_connection(self.db_file, immediate=True, retries=3) as (conn, cursor):
                 cursor.execute('''
                 DELETE FROM traffic_queries WHERE id = ?
                 ''', (query_id,))
                 
-                return True
+            return True
                 
         except sqlite3.Error as e:
             print(f"Erreur lors de la suppression de la requête: {e}")

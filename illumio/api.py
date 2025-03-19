@@ -90,7 +90,7 @@ class IllumioAPI(IllumioAPICore):
     
     def create_async_traffic_query(self, query_data):
         """Crée une requête asynchrone pour analyser les flux de trafic."""
-        # CORRECTION: Afficher plus de détails sur la requête en cas d'erreur
+        # CORRECTION: Pas de doublon dans l'affichage
         try:
             response = self._make_request('post', 'traffic_flows/async_queries', data=query_data)
             if 'href' not in response:

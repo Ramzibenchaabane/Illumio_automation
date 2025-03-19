@@ -3,6 +3,7 @@
 Handles deep rule analysis for traffic flows.
 """
 import time
+import random
 from typing import Dict, Any, Optional, List, Union
 
 from .base_components import TrafficAnalysisBaseComponent
@@ -57,19 +58,24 @@ class DeepRuleAnalyzer(TrafficAnalysisBaseComponent):
             # Update query rules status in database
             if self.save_to_db:
                 try:
-                    max_retries = 3
+                    # Attendre un peu avant de mettre à jour le statut pour éviter les conflits
+                    time.sleep(1)
+                    
+                    max_retries = 5
                     for attempt in range(max_retries):
                         try:
                             if self.db.update_traffic_query_rules_status(query_id, 'working'):
                                 break
                             else:
                                 if attempt < max_retries - 1:
-                                    print(f"Échec de mise à jour du statut des règles, tentative {attempt+1}/{max_retries}")
-                                    time.sleep(1 * (2 ** attempt))  # Exponential backoff
+                                    wait_time = (2 ** attempt) * 0.5 + random.uniform(0, 0.5)
+                                    print(f"Échec de mise à jour du statut des règles, tentative {attempt+1}/{max_retries} dans {wait_time:.2f}s...")
+                                    time.sleep(wait_time)
                         except Exception as e:
                             if attempt < max_retries - 1:
-                                print(f"Erreur lors de la mise à jour du statut des règles: {e}, tentative {attempt+1}/{max_retries}")
-                                time.sleep(1 * (2 ** attempt))  # Exponential backoff
+                                wait_time = (2 ** attempt) * 0.5 + random.uniform(0, 0.5)
+                                print(f"Erreur lors de la mise à jour du statut des règles: {e}, tentative {attempt+1}/{max_retries} dans {wait_time:.2f}s...")
+                                time.sleep(wait_time)
                             else:
                                 print(f"Erreur lors de la mise à jour du statut des règles après plusieurs tentatives: {e}")
                 except Exception as e:
@@ -101,17 +107,19 @@ class DeepRuleAnalyzer(TrafficAnalysisBaseComponent):
                     if self.save_to_db:
                         try:
                             # Use exponential backoff for database updates
-                            max_db_retries = 3
+                            max_db_retries = 5
                             for db_attempt in range(max_db_retries):
                                 try:
                                     if self.db.update_traffic_query_rules_status(query_id, rules_status):
                                         break
                                     elif db_attempt < max_db_retries - 1:
-                                        time.sleep(0.5 * (2 ** db_attempt))
+                                        wait_time = (2 ** db_attempt) * 0.5 + random.uniform(0, 0.5)
+                                        time.sleep(wait_time)
                                 except Exception as e:
                                     if db_attempt < max_db_retries - 1:
-                                        print(f"Erreur de base de données: {e}, tentative {db_attempt+1}/{max_db_retries}")
-                                        time.sleep(0.5 * (2 ** db_attempt))
+                                        wait_time = (2 ** db_attempt) * 0.5 + random.uniform(0, 0.5)
+                                        print(f"Erreur de base de données: {e}, tentative {db_attempt+1}/{max_db_retries} dans {wait_time:.2f}s...")
+                                        time.sleep(wait_time)
                                     else:
                                         print(f"Erreur de base de données après plusieurs tentatives: {e}")
                         except Exception as e:
@@ -132,6 +140,9 @@ class DeepRuleAnalyzer(TrafficAnalysisBaseComponent):
             if rules_status != 'completed':
                 print(f"❌ L'analyse de règles n'a pas été complétée après {max_attempts} tentatives.")
                 return None
+            
+            # Attendre un peu pour s'assurer que les résultats sont disponibles
+            time.sleep(2)
             
             # Retrieve final results
             print("Récupération des résultats de l'analyse de règles...")
