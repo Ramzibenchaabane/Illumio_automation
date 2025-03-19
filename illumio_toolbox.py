@@ -1,6 +1,6 @@
+#!/usr/bin/env python3
 # illumio_toolbox.py
 # Point d'entrée principal pour l'application d'automatisation Illumio.
-#!/usr/bin/env python3
 """
 Point d'entrée principal pour l'application d'automatisation Illumio.
 """
@@ -9,6 +9,7 @@ import os
 from cli_modules.menu_utils import print_header, print_menu, get_user_choice
 from cli_modules.sync_menu import sync_database_menu
 from cli_modules.traffic_menu import traffic_analysis_menu
+from illumio.utils.directory_manager import get_input_dir, get_output_dir
 
 def check_dependencies():
     """Vérifie si les dépendances nécessaires sont installées."""
@@ -122,11 +123,26 @@ def show_statistics():
 
 def show_version():
     """Affiche la version de l'application."""
-    print("\nIllumio Automation Tool v1.1")
+    print("\nIllumio Automation Tool v1.2")
     print("© 2025 - Tous droits réservés")
-    print("\nAmélioration des fonctionnalités d'analyse de trafic:")
+    print("\nAméliorations:")
     print("- Analyse manuelle (source/destination/service)")
-    print("- Import de fichiers Excel")
+    print("- Import de fichiers Excel depuis le dossier 'input_files'")
+    print("- Export des résultats dans le dossier 'outputs'")
+
+def setup_directories():
+    """Crée les répertoires nécessaires pour l'application."""
+    # Crée les répertoires d'entrée et de sortie
+    input_dir = get_input_dir()
+    output_dir = get_output_dir()
+    
+    # Crée également le répertoire de données
+    os.makedirs('data', exist_ok=True)
+    
+    print(f"Répertoires d'application initialisés:")
+    print(f"- Entrée: {input_dir}")
+    print(f"- Sortie: {output_dir}")
+    print(f"- Données: {os.path.abspath('data')}")
 
 def main():
     """Fonction principale."""
@@ -138,8 +154,8 @@ def main():
         # Afficher la version
         show_version()
         
-        # Vérifier l'existence du répertoire de données
-        os.makedirs('data', exist_ok=True)
+        # Initialiser les répertoires de l'application
+        setup_directories()
         
         # Lancer le menu principal
         return main_menu()

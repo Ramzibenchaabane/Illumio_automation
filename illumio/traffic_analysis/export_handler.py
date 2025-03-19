@@ -8,6 +8,8 @@ import csv
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
+from illumio.utils.directory_manager import get_output_dir, get_file_path
+
 from .base_components import TrafficAnalysisBaseComponent
 from .result_processing import TrafficResultProcessor
 
@@ -35,8 +37,9 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         if not filename.endswith(('.json', '.csv')):
             filename += '.json' if format_type.lower() == 'json' else '.csv'
         
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
+        # If the filename is not an absolute path, put it in the outputs directory
+        if not os.path.isabs(filename):
+            filename = get_file_path(os.path.basename(filename), 'output')
         
         # Process raw flows for export
         processed_flows = TrafficResultProcessor.process_raw_flows(flows)
@@ -136,7 +139,8 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         
         # Generate default filename if not provided
         if not output_file:
-            output_file = f"traffic_analysis_{query_id}_{datetime.now().strftime('%Y%m%d')}"
+            output_dir = get_output_dir()
+            output_file = os.path.join(output_dir, f"traffic_analysis_{query_id}_{datetime.now().strftime('%Y%m%d')}")
         
         # Perform export
         return self.export_flows(flows, output_file, format_type)

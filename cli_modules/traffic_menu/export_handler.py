@@ -3,7 +3,10 @@
 """
 Module pour l'exportation des résultats d'analyse de trafic.
 """
+import os
 from datetime import datetime
+
+from illumio.utils.directory_manager import get_output_dir, get_file_path
 
 from cli_modules.menu_utils import get_user_choice
 from .common import (
@@ -56,7 +59,10 @@ def export_traffic_analysis():
         if format_choice == 0:
             return
         
-        # Demander le chemin du fichier
+        # Récupérer le répertoire de sortie
+        output_dir = get_output_dir()
+        
+        # Demander le nom du fichier
         default_filename = f"traffic_analysis_{query_id}_{datetime.now().strftime('%Y%m%d')}"
         filename = input(f"\nNom du fichier (défaut: {default_filename}): ")
         
@@ -70,10 +76,13 @@ def export_traffic_analysis():
         if not filename.endswith(f'.{format_type}'):
             filename += f'.{format_type}'
         
-        success = analyzer.export_flows(query_id, format_type=format_type, output_file=filename)
+        # Construire le chemin complet du fichier de sortie
+        output_path = get_file_path(filename, 'output')
+        
+        success = analyzer.export_flows(query_id, format_type=format_type, output_file=output_path)
         
         if success:
-            print(f"\n✅ Exportation réussie vers {filename}")
+            print(f"\n✅ Exportation réussie vers {output_path}")
         else:
             print("\n❌ Erreur lors de l'export.")
     

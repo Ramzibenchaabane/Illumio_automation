@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
+from illumio.utils.directory_manager import get_input_dir, list_files
+
 from .common import (
     initialize_analyzer,
     print_analysis_header,
@@ -19,27 +21,47 @@ def excel_import_analysis():
     """Analyse de trafic par importation d'un fichier Excel."""
     print_analysis_header("ANALYSE DE TRAFIC PAR IMPORTATION DE FICHIER EXCEL")
     
-    # Demander le chemin du fichier
-    file_path = input("Chemin du fichier Excel (.xlsx): ")
+    # Obtenir le dossier d'entrée et la liste des fichiers Excel
+    input_dir = get_input_dir()
+    excel_files = list_files('input', extension='.xlsx') + list_files('input', extension='.xls')
     
-    if not file_path:
-        print("Aucun fichier spécifié.")
+    if not excel_files:
+        print(f"Aucun fichier Excel trouvé dans le dossier {input_dir}")
+        print("Veuillez y placer un fichier Excel (.xlsx ou .xls) avant de continuer.")
         return
     
-    if not os.path.exists(file_path):
-        print(f"Le fichier {file_path} n'existe pas.")
+    print(f"\nFichiers Excel disponibles dans {input_dir}:")
+    for i, file in enumerate(excel_files, 1):
+        print(f"{i}. {file}")
+    
+    print("\n0. Revenir au menu précédent")
+    
+    # Demander à l'utilisateur de choisir un fichier
+    choice = input("\nVotre choix (numéro du fichier): ")
+    
+    if choice == '0' or not choice:
         return
     
-    if not file_path.endswith(('.xlsx', '.xls')):
-        print("Le fichier doit être au format Excel (.xlsx ou .xls).")
-        return
+    try:
+        file_index = int(choice) - 1
+        if file_index < 0 or file_index >= len(excel_files):
+            print("Choix invalide.")
+            return
+        
+        file_name = excel_files[file_index]
+        file_path = os.path.join(input_dir, file_name)
+        
+        # Demander si l'analyse de règles approfondie doit être effectuée
+        deep_analysis = input("\nEffectuer une analyse de règles approfondie ? (o/N): ").lower()
+        perform_deep_analysis = deep_analysis in ('o', 'oui', 'y', 'yes')
+        
+        # Analyser le fichier et créer une requête d'analyse
+        analyze_excel_flows(file_path, perform_deep_analysis)
     
-    # Demander si l'analyse de règles approfondie doit être effectuée
-    deep_analysis = input("\nEffectuer une analyse de règles approfondie ? (o/N): ").lower()
-    perform_deep_analysis = deep_analysis in ('o', 'oui', 'y', 'yes')
-    
-    # Analyser le fichier et créer une requête d'analyse
-    analyze_excel_flows(file_path, perform_deep_analysis)
+    except ValueError:
+        print("Veuillez entrer un nombre valide.")
+    except Exception as e:
+        print(f"Erreur: {e}")
 
 def analyze_excel_flows(file_path, perform_deep_analysis=False):
     """
@@ -131,7 +153,7 @@ def analyze_excel_flows(file_path, perform_deep_analysis=False):
         query_name = f"Excel_Flows_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         # Structurer la requête pour inclure tous les flux
-        # CORRECTION: Formater correctement selon le schéma API Illumio
+        # Format correct pour l'API: tableaux imbriqués pour sources/destinations
         sources_include = []
         destinations_include = []
         services_include = []
