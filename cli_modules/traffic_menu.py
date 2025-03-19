@@ -312,8 +312,24 @@ def display_traffic_flows(flows, limit=20):
                 
                 src_ip = src.get('ip') or 'N/A'
                 dst_ip = dst.get('ip') or 'N/A'
-                service_name = service.get('name') or str(service.get('port')) + '/' + str(service.get('proto')) or 'N/A'
-                port = service.get('port') or 'N/A'
+                
+                # CORRECTION: Gérer correctement l'affichage du service pour éviter les erreurs de formatage
+                port_val = service.get('port')
+                proto_val = service.get('proto')
+                service_name = 'N/A'
+                
+                # Extraire le service_name en évitant les erreurs de formatage
+                if service.get('name'):
+                    service_name = service.get('name')
+                elif port_val is not None and proto_val is not None:
+                    # Convertir explicitement en chaîne pour éviter les erreurs
+                    service_name = f"{port_val}/{proto_val}"
+                
+                # Assurer que port est une valeur simple et pas un dictionnaire
+                port = 'N/A'
+                if port_val is not None:
+                    port = str(port_val)
+                
                 decision = raw_data.get('policy_decision') or 'N/A'
                 
                 # CORRECTION: Gérer les deux formats de règles
@@ -328,9 +344,11 @@ def display_traffic_flows(flows, limit=20):
                     rule = rules[0]
                     rule_href = rule.get('href', 'N/A')
                     # Utiliser l'ID de la règle depuis l'URL href
-                    rule_name = rule_href.split('/')[-1] if rule_href != 'N/A' else 'N/A'
-            except:
-                # Si l'extraction échoue, utiliser les données directes
+                    if rule_href != 'N/A':
+                        rule_name = rule_href.split('/')[-1]
+            except Exception as e:
+                # En cas d'erreur d'extraction, utiliser les données directes et afficher l'erreur
+                print(f"Erreur lors de l'extraction des données du flux {i}: {e}")
                 src_ip = flow.get('src_ip') or 'N/A'
                 dst_ip = flow.get('dst_ip') or 'N/A'
                 service_name = flow.get('service') or 'N/A'
@@ -347,10 +365,11 @@ def display_traffic_flows(flows, limit=20):
             rule_name = flow.get('rule_name') or 'N/A'
         
         # Limiter la longueur de rule_name pour l'affichage
-        if len(str(rule_name)) > 18:
+        if rule_name != 'N/A' and len(str(rule_name)) > 18:
             rule_name = str(rule_name)[:15] + '...'
             
-        print(f"{src_ip:<15} {dst_ip:<15} {service_name:<20} {port:<8} {decision:<15} {rule_name:<20}")
+        # Assurer que toutes les valeurs sont des chaînes pour l'affichage
+        print(f"{str(src_ip):<15} {str(dst_ip):<15} {str(service_name):<20} {str(port):<8} {str(decision):<15} {str(rule_name):<20}")
 
 def export_traffic_analysis():
     """Exporte les résultats d'une analyse de trafic."""
