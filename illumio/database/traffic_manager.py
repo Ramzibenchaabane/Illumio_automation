@@ -374,12 +374,40 @@ class TrafficManager:
                     SELECT * FROM traffic_queries ORDER BY created_at DESC
                     ''')
                 
-                return [dict(row) for row in cursor.fetchall()]
+                # Convertir explicitement en liste de dictionnaires
+                results = []
+                for row in cursor.fetchall():
+                    # Vérifier si row est SQLite Row et peut être converti en dict
+                    if hasattr(row, 'keys'):
+                        row_dict = {key: row[key] for key in row.keys()}
+                        results.append(row_dict)
+                    else:
+                        # Si ce n'est pas un SQLite Row, essayer de le gérer comme un object
+                        try:
+                            if hasattr(row, '_asdict'):  # namedtuple
+                                results.append(row._asdict())
+                            elif hasattr(row, '__dict__'):  # objet Python standard
+                                results.append(row.__dict__)
+                            else:
+                                # Dernier recours: créer un dictionnaire avec des attributs communs
+                                results.append({
+                                    'id': getattr(row, 'id', None),
+                                    'query_name': getattr(row, 'query_name', None),
+                                    'status': getattr(row, 'status', None),
+                                    'rules_status': getattr(row, 'rules_status', None),
+                                    'created_at': getattr(row, 'created_at', None)
+                                })
+                        except Exception as e:
+                            print(f"Erreur lors de la conversion d'une ligne: {e}")
+                            continue
                 
+                return results
+                    
         except sqlite3.Error as e:
             print(f"Erreur lors de la récupération des requêtes de trafic: {e}")
             return []
-    
+
+        
     def get_flows(self, query_id):
         """Récupère les flux de trafic pour une requête spécifique.
         
@@ -395,8 +423,37 @@ class TrafficManager:
                 SELECT * FROM traffic_flows WHERE query_id = ?
                 ''', (query_id,))
                 
-                return [dict(row) for row in cursor.fetchall()]
+                # Convertir explicitement en liste de dictionnaires
+                results = []
+                for row in cursor.fetchall():
+                    # Vérifier si row est SQLite Row et peut être converti en dict
+                    if hasattr(row, 'keys'):
+                        row_dict = {key: row[key] for key in row.keys()}
+                        results.append(row_dict)
+                    else:
+                        # Si ce n'est pas un SQLite Row, essayer de le gérer comme un object
+                        try:
+                            if hasattr(row, '_asdict'):  # namedtuple
+                                results.append(row._asdict())
+                            elif hasattr(row, '__dict__'):  # objet Python standard
+                                results.append(row.__dict__)
+                            else:
+                                # Dernier recours: créer un dictionnaire avec des attributs communs de flux
+                                results.append({
+                                    'id': getattr(row, 'id', None),
+                                    'query_id': getattr(row, 'query_id', None),
+                                    'src_ip': getattr(row, 'src_ip', None),
+                                    'dst_ip': getattr(row, 'dst_ip', None),
+                                    'service': getattr(row, 'service', None),
+                                    'policy_decision': getattr(row, 'policy_decision', None),
+                                    'raw_data': getattr(row, 'raw_data', None)
+                                })
+                        except Exception as e:
+                            print(f"Erreur lors de la conversion d'une ligne: {e}")
+                            continue
                 
+                return results
+                    
         except sqlite3.Error as e:
             print(f"Erreur lors de la récupération des flux de trafic: {e}")
             return []

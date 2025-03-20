@@ -237,6 +237,22 @@ class FlowDisplayFormatter:
             flows (list): Liste des flux de trafic
             limit (int): Limite du nombre de flux à afficher
         """
+        if not flows:
+            print("Aucun flux à afficher.")
+            return
+            
+        # Vérifier le type de la liste flows
+        if not isinstance(flows, list):
+            print(f"Attention: 'flows' n'est pas une liste mais un {type(flows)}. Tentative de conversion...")
+            try:
+                if hasattr(flows, '__iter__'):
+                    flows = list(flows)
+                else:
+                    flows = [flows]
+            except Exception as e:
+                print(f"Erreur de conversion: {e}")
+                return
+        
         # Définir l'en-tête du tableau
         print("\n" + "-" * 120)
         print(f"{'SOURCE':<16} {'DESTINATION':<16} {'SERVICE':<20} {'DÉCISION':<15} {'CONNEXIONS':<12} {'DIRECTION':<10} {'RÈGLE ID':<25} {'RÈGLE NOM':<20}")
@@ -248,7 +264,7 @@ class FlowDisplayFormatter:
                 break
                 
             try:
-                # Données à extraire
+                # Données à extraire avec valeurs par défaut
                 src_ip = "N/A"
                 dst_ip = "N/A"
                 service_name = "N/A"
@@ -258,19 +274,44 @@ class FlowDisplayFormatter:
                 rule_href = "N/A"
                 rule_name = "N/A"
                 
-                # === EXTRACTION DIRECTE DU FORMAT JSON ILLUMIO ===
-                # Si les données sont au format API brut
-                if isinstance(flow, dict):
-                    # Source IP
-                    if 'src' in flow and isinstance(flow['src'], dict) and 'ip' in flow['src']:
-                        src_ip = flow['src']['ip']
-                    
-                    # Destination IP
-                    if 'dst' in flow and isinstance(flow['dst'], dict) and 'ip' in flow['dst']:
-                        dst_ip = flow['dst']['ip']
-                    
-                    # Service
-                    if 'service' in flow and isinstance(flow['service'], dict):
+                # Vérifier si flow est un objet dict ou un autre type
+                if not isinstance(flow, dict):
+                    if hasattr(flow, 'get') and callable(flow.get):
+                        # C'est un objet qui supporte get() comme un dictionnaire
+                        pass
+                    elif hasattr(flow, '__dict__'):
+                        # Convertir un objet en dictionnaire
+                        flow = flow.__dict__
+                    elif hasattr(flow, 'raw_data') and isinstance(flow.raw_data, str):
+                        # Essayer de parser raw_data comme JSON
+                        import json
+                        try:
+                            flow = json.loads(flow.raw_data)
+                        except:
+                            pass
+                    else:
+                        # Impossible de traiter ce type de flux
+                        print(f"Impossible de traiter ce type de flux: {type(flow)}")
+                        count += 1
+                        continue
+                
+                # Extraction des données d'un flux à partir de différentes structures possibles
+                
+                # 1. Extraire l'IP source
+                if 'src' in flow and isinstance(flow['src'], dict) and 'ip' in flow['src']:
+                    src_ip = flow['src']['ip']
+                elif 'src_ip' in flow:
+                    src_ip = flow['src_ip']
+                
+                # 2. Extraire l'IP destination
+                if 'dst' in flow and isinstance(flow['dst'], dict) and 'ip' in flow['dst']:
+                    dst_ip = flow['dst']['ip']
+                elif 'dst_ip' in flow:
+                    dst_ip = flow['dst_ip']
+                
+                # 3. Extraire les informations de service
+                if 'service' in flow:
+                    if isinstance(flow['service'], dict):
                         service = flow['service']
                         port = service.get('port', '')
                         proto = service.get('proto', '')
@@ -283,47 +324,44 @@ class FlowDisplayFormatter:
                             service_name = f"Port {port}"
                         elif proto:
                             service_name = f"Proto {proto}"
-                    
-                    # Décision
-                    policy_decision = flow.get('policy_decision', flow.get('draft_policy_decision', 'N/A'))
-                    
-                    # Nombre de connexions
-                    num_connections = str(flow.get('num_connections', 'N/A'))
-                    
-                    # Direction du flux
-                    flow_direction = flow.get('flow_direction', 'N/A')
-                    
-                    # Règles
-                    if 'rules' in flow:
-                        rules = flow['rules']
-                        if isinstance(rules, list) and len(rules) > 0:
-                            first_rule = rules[0]
-                            if 'href' in first_rule:
-                                rule_href = first_rule['href']
-                                # Extraire l'ID de la règle à partir de l'URL
-                                rule_name = rule_href.split('/')[-1]
-                        elif isinstance(rules, dict) and 'sec_policy' in rules:
-                            sec_policy = rules['sec_policy']
+                    elif isinstance(flow['service'], str):
+                        service_name = flow['service']
+                elif 'service_name' in flow:
+                    service_name = flow['service_name']
+                
+                # 4. Extraire la décision de politique
+                policy_decision = flow.get('policy_decision', flow.get('draft_policy_decision', 'N/A'))
+                
+                # 5. Extraire le nombre de connexions
+                num_connections = str(flow.get('num_connections', 'N/A'))
+                
+                # 6. Extraire la direction du flux
+                flow_direction = flow.get('flow_direction', 'N/A')
+                
+                # 7. Extraire les informations de règle
+                if 'rule_href' in flow:
+                    # Format déjà extrait
+                    rule_href = flow.get('rule_href', 'N/A')
+                    rule_name = flow.get('rule_name', 'N/A')
+                elif 'rules' in flow:
+                    rules = flow['rules']
+                    if isinstance(rules, list) and len(rules) > 0:
+                        first_rule = rules[0]
+                        if 'href' in first_rule:
+                            rule_href = first_rule['href']
+                            # Extraire l'ID de la règle à partir de l'URL
+                            rule_name = first_rule.get('name', rule_href.split('/')[-1] if rule_href else 'N/A')
+                    elif isinstance(rules, dict) and 'sec_policy' in rules:
+                        sec_policy = rules['sec_policy']
+                        if isinstance(sec_policy, dict):
                             rule_href = sec_policy.get('href', 'N/A')
                             rule_name = sec_policy.get('name', rule_href.split('/')[-1] if rule_href != 'N/A' else 'N/A')
+                        elif isinstance(sec_policy, str):
+                            rule_href = sec_policy
+                            rule_name = sec_policy.split('/')[-1] if '/' in sec_policy else sec_policy
                 
-                # === EXTRACTION DEPUIS LE FORMAT BDD ===
-                # Si c'est un format BDD (avec les champs extraits)
-                else:
-                    # Tenter d'accéder aux attributs comme un dictionnaire
-                    if hasattr(flow, 'get') and callable(flow.get):
-                        src_ip = flow.get('src_ip', 'N/A')
-                        dst_ip = flow.get('dst_ip', 'N/A')
-                        service_name = flow.get('service', 'N/A')
-                        policy_decision = flow.get('policy_decision', 'N/A')
-                        num_connections = str(flow.get('num_connections', 'N/A'))
-                        flow_direction = flow.get('flow_direction', 'N/A')
-                        rule_href = flow.get('rule_href', 'N/A')
-                        rule_name = flow.get('rule_name', 'N/A')
-                
-                # === EXTRACTION DEPUIS LE CHAMP RAW_DATA ===
-                # Si on a stocké les données JSON brutes dans un champ raw_data
-                if hasattr(flow, 'get') and callable(flow.get) and flow.get('raw_data'):
+                # 8. Tentative supplémentaire avec raw_data si présent
+                if 'raw_data' in flow and flow['raw_data']:
                     try:
                         import json
                         raw_data = None
@@ -335,16 +373,14 @@ class FlowDisplayFormatter:
                             raw_data = flow['raw_data']
                             
                         if raw_data:
-                            # Source IP
-                            if 'src' in raw_data and isinstance(raw_data['src'], dict) and 'ip' in raw_data['src']:
+                            # Remplir les valeurs manquantes ou remplacer les valeurs N/A
+                            if src_ip == "N/A" and 'src' in raw_data and isinstance(raw_data['src'], dict) and 'ip' in raw_data['src']:
                                 src_ip = raw_data['src']['ip']
                             
-                            # Destination IP
-                            if 'dst' in raw_data and isinstance(raw_data['dst'], dict) and 'ip' in raw_data['dst']:
+                            if dst_ip == "N/A" and 'dst' in raw_data and isinstance(raw_data['dst'], dict) and 'ip' in raw_data['dst']:
                                 dst_ip = raw_data['dst']['ip']
                             
-                            # Service
-                            if 'service' in raw_data and isinstance(raw_data['service'], dict):
+                            if service_name == "N/A" and 'service' in raw_data and isinstance(raw_data['service'], dict):
                                 service = raw_data['service']
                                 port = service.get('port', '')
                                 proto = service.get('proto', '')
@@ -358,58 +394,65 @@ class FlowDisplayFormatter:
                                 elif proto:
                                     service_name = f"Proto {proto}"
                             
-                            # Décision
-                            if 'policy_decision' in raw_data:
-                                policy_decision = raw_data['policy_decision']
-                            elif 'draft_policy_decision' in raw_data:
-                                policy_decision = raw_data['draft_policy_decision']
+                            if policy_decision == "N/A":
+                                policy_decision = raw_data.get('policy_decision', raw_data.get('draft_policy_decision', 'N/A'))
                             
-                            # Nombre de connexions
-                            if 'num_connections' in raw_data:
+                            if num_connections == "N/A" and 'num_connections' in raw_data:
                                 num_connections = str(raw_data['num_connections'])
                             
-                            # Direction du flux
-                            if 'flow_direction' in raw_data:
+                            if flow_direction == "N/A" and 'flow_direction' in raw_data:
                                 flow_direction = raw_data['flow_direction']
                             
-                            # Règles
-                            if 'rules' in raw_data:
+                            if rule_href == "N/A" and rule_name == "N/A" and 'rules' in raw_data:
                                 rules = raw_data['rules']
                                 if isinstance(rules, list) and len(rules) > 0:
                                     first_rule = rules[0]
                                     if 'href' in first_rule:
                                         rule_href = first_rule['href']
                                         # Extraire l'ID de la règle à partir de l'URL
-                                        rule_name = rule_href.split('/')[-1]
+                                        rule_name = first_rule.get('name', rule_href.split('/')[-1] if rule_href else 'N/A')
                                 elif isinstance(rules, dict) and 'sec_policy' in rules:
                                     sec_policy = rules['sec_policy']
-                                    rule_href = sec_policy.get('href', 'N/A')
-                                    rule_name = sec_policy.get('name', rule_href.split('/')[-1] if rule_href != 'N/A' else 'N/A')
+                                    if isinstance(sec_policy, dict):
+                                        rule_href = sec_policy.get('href', 'N/A')
+                                        rule_name = sec_policy.get('name', rule_href.split('/')[-1] if rule_href != 'N/A' else 'N/A')
                     except Exception as e:
-                        # En cas d'erreur de parsing, continuer avec les valeurs déjà extraites
+                        # Ignorer les erreurs de parsing de raw_data
                         pass
                 
-                # Formatage pour l'affichage
-                if src_ip == "None" or not src_ip:
+                # Formatage pour l'affichage avec gestion des valeurs None ou vides
+                if src_ip in ("None", None, ""):
                     src_ip = "N/A"
-                if dst_ip == "None" or not dst_ip:
+                if dst_ip in ("None", None, ""):
                     dst_ip = "N/A"
-                if service_name == "None" or not service_name:
+                if service_name in ("None", None, ""):
                     service_name = "N/A"
-                if policy_decision == "None" or not policy_decision:
+                if policy_decision in ("None", None, ""):
                     policy_decision = "N/A"
-                if num_connections == "None" or not num_connections:
+                if num_connections in ("None", None, ""):
                     num_connections = "N/A"
-                if flow_direction == "None" or not flow_direction:
+                if flow_direction in ("None", None, ""):
                     flow_direction = "N/A"
-                if rule_href == "None" or not rule_href:
+                if rule_href in ("None", None, ""):
                     rule_href = "N/A"
-                if rule_name == "None" or not rule_name:
+                if rule_name in ("None", None, ""):
                     rule_name = "N/A"
+                
+                # Limiter la longueur des chaînes pour éviter les problèmes d'affichage
+                src_ip = str(src_ip)[:16]
+                dst_ip = str(dst_ip)[:16]
+                service_name = str(service_name)[:20]
+                policy_decision = str(policy_decision)[:15]
+                num_connections = str(num_connections)[:12]
+                flow_direction = str(flow_direction)[:10]
                 
                 # Si rule_href est trop long, le raccourcir
                 if len(str(rule_href)) > 23:
                     rule_href = str(rule_href)[:20] + "..."
+                else:
+                    rule_href = str(rule_href)[:25]
+                
+                rule_name = str(rule_name)[:20]
                 
                 # Afficher la ligne
                 print(f"{src_ip:<16} {dst_ip:<16} {service_name:<20} {policy_decision:<15} "
@@ -418,6 +461,9 @@ class FlowDisplayFormatter:
                 count += 1
             except Exception as e:
                 print(f"Erreur de formatage pour un flux: {e}")
+                # Ne pas afficher tout le flux si c'est un objet volumineux
+                count += 1
         
+        print("-" * 120)
         if count < len(flows):
             print(f"\n... et {len(flows) - count} autres flux.")

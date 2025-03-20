@@ -3,6 +3,7 @@
 """
 Module pour visualiser les analyses de trafic existantes.
 """
+import traceback
 from .common import (
     initialize_analyzer, 
     print_analysis_header, 
@@ -20,11 +21,16 @@ def view_traffic_analyses():
         if not analyzer:
             return
         
-        # Récupérer les requêtes
-        queries = analyzer.get_queries()
-        
-        if not queries:
-            print("Aucune analyse de trafic trouvée.")
+        # Récupérer les requêtes avec gestion d'erreur améliorée
+        try:
+            queries = analyzer.get_queries()
+            if not queries:
+                print("Aucune analyse de trafic trouvée.")
+                return
+        except Exception as e:
+            print(f"Erreur lors de la récupération des analyses: {e}")
+            print("Détails de l'erreur:")
+            traceback.print_exc()
             return
         
         print(f"\n{len(queries)} analyses trouvées.\n")
@@ -39,7 +45,9 @@ def view_traffic_analyses():
             view_traffic_analysis_details(query_id)
     
     except Exception as e:
-        print(f"Erreur lors de la récupération des analyses: {e}")
+        print(f"Erreur lors de l'affichage des analyses: {e}")
+        print("Détails de l'erreur:")
+        traceback.print_exc()
 
 def view_traffic_analysis_details(query_id):
     """
@@ -54,11 +62,16 @@ def view_traffic_analysis_details(query_id):
         if not analyzer:
             return
         
-        # Récupérer les flux
-        flows = analyzer.get_flows(query_id)
-        
-        if not flows:
-            print(f"Aucun flux trouvé pour l'analyse {query_id}.")
+        # Récupérer les flux avec gestion d'erreur améliorée
+        try:
+            flows = analyzer.get_flows(query_id)
+            if not flows:
+                print(f"Aucun flux trouvé pour l'analyse {query_id}.")
+                return
+        except Exception as e:
+            print(f"Erreur lors de la récupération des flux: {e}")
+            print("Détails de l'erreur:")
+            traceback.print_exc()
             return
         
         print(f"\nDétails de l'analyse {query_id}:")
@@ -67,6 +80,13 @@ def view_traffic_analysis_details(query_id):
         # Afficher un résumé des flux par décision de politique
         decisions = {}
         for flow in flows:
+            # Vérifier si flow est un dictionnaire pour éviter les erreurs d'attribut
+            if not isinstance(flow, dict):
+                if hasattr(flow, '__dict__'):
+                    flow = flow.__dict__
+                else:
+                    flow = {"policy_decision": "inconnu", "rule_href": None}
+            
             decision = flow.get('policy_decision')
             if decision in decisions:
                 decisions[decision] += 1
@@ -79,7 +99,7 @@ def view_traffic_analysis_details(query_id):
                 print(f"  - {decision}: {count} flux")
         
         # Compter les flux avec une règle identifiée
-        flows_with_rules = sum(1 for flow in flows if flow.get('rule_href'))
+        flows_with_rules = sum(1 for flow in flows if isinstance(flow, dict) and flow.get('rule_href'))
         if flows_with_rules > 0:
             print(f"\nFlux avec règles identifiées: {flows_with_rules} ({(flows_with_rules / len(flows)) * 100:.1f}%)")
         
@@ -90,7 +110,9 @@ def view_traffic_analysis_details(query_id):
             display_traffic_flows(flows)
     
     except Exception as e:
-        print(f"Erreur lors de la récupération des détails: {e}")
+        print(f"Erreur lors de l'affichage des détails: {e}")
+        print("Détails de l'erreur:")
+        traceback.print_exc()
 
 def display_traffic_flows(flows, limit=20):
     """
@@ -100,5 +122,23 @@ def display_traffic_flows(flows, limit=20):
         flows (list): Liste des flux de trafic
         limit (int): Nombre maximum de flux à afficher
     """
-    # Utiliser le formatteur de la classe utilitaire
-    FlowDisplayFormatter.format_flow_table(flows, limit)
+    # Utiliser le formatteur de la classe utilitaire avec gestion d'erreur
+    try:
+        FlowDisplayFormatter.format_flow_table(flows, limit)
+    except Exception as e:
+        print(f"Erreur lors de l'affichage des flux: {e}")
+        print("Détails de l'erreur:")
+        traceback.print_exc()
+        
+        # Tentative de récupération en affichant les données brutes
+        print("\nAffichage des données brutes des flux:")
+        for i, flow in enumerate(flows[:limit]):
+            if i >= limit:
+                break
+            print(f"Flux {i+1}:")
+            if isinstance(flow, dict):
+                for key, value in flow.items():
+                    print(f"  {key}: {value}")
+            else:
+                print(f"  {flow}")
+            print("-" * 50)

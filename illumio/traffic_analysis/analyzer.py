@@ -225,60 +225,151 @@ class IllumioTrafficAnalyzer(TrafficAnalysisBaseComponent):
             print(traceback.format_exc())
             return False
     
-    def get_queries(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Retrieve existing traffic queries.
-        
-        Args:
-            status (str, optional): Filter by query status
-        
-        Returns:
-            List of traffic query details
-        """
-        if not self.save_to_db:
-            print("Database is disabled, cannot retrieve queries.")
-            return []
-        
-        return self.db.get_traffic_queries(status)
+def get_queries(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Retrieve existing traffic queries.
     
-    def get_flows(self, query_id: str) -> List[Dict[str, Any]]:
-        """
-        Retrieve traffic flows for a specific query.
-        
-        Args:
-            query_id (str): ID of the traffic query
-        
-        Returns:
-            List of traffic flows
-        """
-        if not self.save_to_db:
-            print("Database is disabled, cannot retrieve flows.")
-            return []
-        
-        return self.db.get_traffic_flows(query_id)
+    Args:
+        status (str, optional): Filter by query status
     
-    def export_flows(self, 
-                     query_id: str, 
-                     format_type: str = 'json', 
-                     output_file: Optional[str] = None) -> bool:
-        """
-        Export traffic flows for a specific query.
+    Returns:
+        List of traffic query details
+    """
+    if not self.save_to_db:
+        print("Database is disabled, cannot retrieve queries.")
+        return []
+    
+    try:
+        # Récupérer les requêtes avec gestion d'erreur améliorée
+        queries = self.db.get_traffic_queries(status)
         
-        Args:
-            query_id (str): ID of the traffic query
-            format_type (str): Export format ('json' or 'csv')
-            output_file (str, optional): Custom output filename
+        # Vérifier la structure des données retournées
+        if queries is None:
+            print("Attention: La méthode get_traffic_queries a retourné None")
+            return []
+            
+        if not isinstance(queries, list):
+            print(f"Attention: Le résultat n'est pas une liste mais un {type(queries)}")
+            # Tenter de convertir en liste si possible
+            if hasattr(queries, '__iter__'):
+                queries = list(queries)
+            else:
+                queries = [queries] if queries else []
         
-        Returns:
-            bool: True if export successful
-        """
-        if not self.save_to_db:
-            print("Database is disabled, cannot export flows.")
+        return queries
+    except Exception as e:
+        import traceback
+        print(f"Erreur lors de la récupération des requêtes: {e}")
+        traceback.print_exc()
+        return []
+
+def get_flows(self, query_id: str) -> List[Dict[str, Any]]:
+    """
+    Retrieve traffic flows for a specific query.
+    
+    Args:
+        query_id (str): ID of the traffic query
+    
+    Returns:
+        List of traffic flows
+    """
+    if not self.save_to_db:
+        print("Database is disabled, cannot retrieve flows.")
+        return []
+    
+    try:
+        # Récupérer les flux avec gestion d'erreur améliorée
+        flows = self.db.get_traffic_flows(query_id)
+        
+        # Vérifier la structure des données retournées
+        if flows is None:
+            print("Attention: La méthode get_traffic_flows a retourné None")
+            return []
+            
+        if not isinstance(flows, list):
+            print(f"Attention: Le résultat n'est pas une liste mais un {type(flows)}")
+            # Tenter de convertir en liste si possible
+            if hasattr(flows, '__iter__'):
+                flows = list(flows)
+            else:
+                flows = [flows] if flows else []
+        
+        # Traitement supplémentaire pour s'assurer que les données brutes sont exploitables
+        processed_flows = []
+        for flow in flows:
+            if isinstance(flow, dict) and 'raw_data' in flow and isinstance(flow['raw_data'], str):
+                # Tenter de parser les données JSON stockées
+                try:
+                    import json
+                    raw_data = json.loads(flow['raw_data'])
+                    # Conserver le flux original mais ajouter les clés importantes pour le traitement
+                    processed_flow = flow.copy()
+                    
+                    # N'ajouter que si les clés n'existent pas déjà dans le flow
+                    if 'src' not in processed_flow and 'src' in raw_data:
+                        processed_flow['src'] = raw_data['src']
+                    if 'dst' not in processed_flow and 'dst' in raw_data:
+                        processed_flow['dst'] = raw_data['dst']
+                    if 'service' not in processed_flow and 'service' in raw_data:
+                        processed_flow['service'] = raw_data['service']
+                    if 'policy_decision' not in processed_flow and 'policy_decision' in raw_data:
+                        processed_flow['policy_decision'] = raw_data['policy_decision']
+                    if 'flow_direction' not in processed_flow and 'flow_direction' in raw_data:
+                        processed_flow['flow_direction'] = raw_data['flow_direction']
+                    if 'num_connections' not in processed_flow and 'num_connections' in raw_data:
+                        processed_flow['num_connections'] = raw_data['num_connections']
+                    if 'rules' not in processed_flow and 'rules' in raw_data:
+                        processed_flow['rules'] = raw_data['rules']
+                    
+                    processed_flows.append(processed_flow)
+                except Exception as e:
+                    # En cas d'échec du parsing, conserver le flux original
+                    processed_flows.append(flow)
+            else:
+                processed_flows.append(flow)
+        
+        return processed_flows
+    except Exception as e:
+        import traceback
+        print(f"Erreur lors de la récupération des flux: {e}")
+        traceback.print_exc()
+        return []
+
+def export_flows(self, 
+                 query_id: str, 
+                 format_type: str = 'json', 
+                 output_file: Optional[str] = None) -> bool:
+    """
+    Export traffic flows for a specific query.
+    
+    Args:
+        query_id (str): ID of the traffic query
+        format_type (str): Export format ('json' or 'csv')
+        output_file (str, optional): Custom output filename
+    
+    Returns:
+        bool: True if export successful
+    """
+    if not self.save_to_db:
+        print("Database is disabled, cannot export flows.")
+        return False
+    
+    try:
+        # Récupérer les flux avec la méthode améliorée
+        flows = self.get_flows(query_id)
+        
+        if not flows:
+            print(f"Aucun flux trouvé pour la requête {query_id}.")
             return False
         
-        # Delegate to export handler
-        return self.export_handler.export_query_results(
-            query_id, 
-            format_type, 
-            output_file
+        # Déléguer à l'export handler
+        return self.export_handler.export_flows(
+            flows, 
+            output_file or f"traffic_analysis_{query_id}", 
+            format_type
         )
+    except Exception as e:
+        import traceback
+        print(f"Erreur lors de l'export des flux: {e}")
+        traceback.print_exc()
+        return False
