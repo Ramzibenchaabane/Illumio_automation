@@ -5,11 +5,12 @@ Module pour l'analyse de trafic via l'importation de fichiers Excel.
 """
 import os
 import time
+import json
 from datetime import datetime, timedelta
 
 import pandas as pd
 
-from illumio.utils.directory_manager import get_input_dir, list_files
+from illumio.utils.directory_manager import get_input_dir, list_files, get_file_path, get_output_dir
 
 from .common import (
     initialize_analyzer,
@@ -65,7 +66,7 @@ def excel_import_analysis():
 
 def analyze_excel_flows(file_path, perform_deep_analysis=False):
     """
-    Analyse les flux spécifiés dans un fichier Excel.
+    Analyse les flux spécifiés dans un fichier Excel en traitant chaque ligne individuellement.
     
     Args:
         file_path (str): Chemin vers le fichier Excel
@@ -149,101 +150,209 @@ def analyze_excel_flows(file_path, perform_deep_analysis=False):
         if not analyzer:
             return
         
-        # Créer une requête d'analyse globale pour tous les flux
-        query_name = f"Excel_Flows_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Créer un timestamp unique pour cette analyse
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        all_results = []  # Pour stocker tous les résultats
         
-        # Structurer la requête pour inclure tous les flux
-        # Format correct pour l'API: tableaux imbriqués pour sources/destinations
-        sources_include = []
-        destinations_include = []
-        services_include = []
+        # Informations sur la période d'analyse
+        start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        end_date = datetime.now().strftime('%Y-%m-%d')
         
-        # Collecter toutes les sources et destinations uniques
-        unique_sources = set(flow['source'] for flow in flows)
-        unique_destinations = set(flow['destination'] for flow in flows)
-        
-        # Format correct pour l'API: tableaux imbriqués pour sources/destinations
-        for source in unique_sources:
-            sources_include.append([{"ip_address": source}])
-        
-        for destination in unique_destinations:
-            destinations_include.append([{"ip_address": destination}])
-        
-        # Organiser les services uniques (protocole/port)
-        for flow in flows:
-            service_entry = {"proto": flow['protocol']}
-            if flow['port']:
-                service_entry["port"] = flow['port']
-            
-            # Vérifier s'il existe déjà un service identique
-            if service_entry not in services_include:
-                services_include.append(service_entry)
-        
-        # Créer la requête finale
-        query_data = {
-            "query_name": query_name,
-            "start_date": (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
-            "end_date": datetime.now().strftime('%Y-%m-%d'),
-            "sources_destinations_query_op": "or",  # Utiliser OR pour permettre tous les flux
-            "sources": {
-                "include": sources_include,
-                "exclude": []
-            },
-            "destinations": {
-                "include": destinations_include,
-                "exclude": []
-            },
-            "services": {
-                "include": services_include,
-                "exclude": []
-            },
-            "policy_decisions": ["allowed", "potentially_blocked", "blocked"],
-            "max_results": 10000
-        }
-        
-        print("\nDémarrage de l'analyse des flux Excel...")
+        print(f"\nPériode d'analyse: {start_date} à {end_date} (7 derniers jours)")
         if perform_deep_analysis:
-            print("L'analyse de règles approfondie sera effectuée après l'analyse de trafic.")
-            
+            print("L'analyse de règles approfondie sera effectuée pour chaque flux.")
+        
+        print("\nDémarrage de l'analyse individuelle des flux Excel...")
+        
+        # Analyser chaque flux individuellement comme dans l'analyse manuelle
+        total_flows = len(flows)
+        successful_flows = 0
+        failed_flows = 0
+        total_results = 0
+        
         start_time = time.time()
         
-        # Exécuter l'analyse
-        results = analyzer.analyze(query_data=query_data, perform_deep_analysis=perform_deep_analysis)
+        for i, flow in enumerate(flows, 1):
+            source_ip = flow['source']
+            dest_ip = flow['destination']
+            protocol = flow['protocol']
+            port = flow['port']
+            
+            print(f"\nAnalyse du flux {i}/{total_flows}: {source_ip} -> {dest_ip}, protocole {protocol}{f', port {port}' if port else ''}")
+            
+            # Créer un nom de requête spécifique
+            query_name = f"Excel_{timestamp}_Flow{i}_{source_ip}_to_{dest_ip}_{protocol}"
+            if port:
+                query_name += f"_port{port}"
+            
+            # Créer une requête d'analyse pour ce flux spécifique
+            query_data = {
+                "query_name": query_name,
+                "start_date": start_date,
+                "end_date": end_date,
+                "sources_destinations_query_op": "and",
+                "sources": {
+                    "include": [
+                        [{"ip_address": source_ip}]  # Tableaux imbriqués comme requis par le schéma
+                    ],
+                    "exclude": []
+                },
+                "destinations": {
+                    "include": [
+                        [{"ip_address": dest_ip}]  # Tableaux imbriqués comme requis par le schéma
+                    ],
+                    "exclude": []
+                },
+                "services": {
+                    "include": [
+                        {
+                            "proto": protocol,
+                            "port": port
+                        } if port else {"proto": protocol}
+                    ],
+                    "exclude": []
+                },
+                "policy_decisions": ["allowed", "potentially_blocked", "blocked"],
+                "max_results": 1000
+            }
+            
+            # Exécuter l'analyse pour ce flux
+            try:
+                results = analyzer.analyze(query_data=query_data, perform_deep_analysis=perform_deep_analysis)
+                
+                if results:
+                    successful_flows += 1
+                    results_count = len(results)
+                    total_results += results_count
+                    print(f"✅ {results_count} flux correspondants trouvés.")
+                    
+                    # Ajouter à notre liste de résultats globale
+                    for result in results:
+                        # Ajouter des métadonnées sur la requête source
+                        result['excel_metadata'] = {
+                            'source_ip': source_ip,
+                            'dest_ip': dest_ip,
+                            'protocol': protocol,
+                            'port': port,
+                            'excel_row': i
+                        }
+                        all_results.append(result)
+                else:
+                    failed_flows += 1
+                    print(f"❌ Aucun résultat pour ce flux.")
+            except Exception as e:
+                failed_flows += 1
+                print(f"❌ Erreur lors de l'analyse: {e}")
         
         end_time = time.time()
         duration = end_time - start_time
         
-        if results:
-            print(f"\n✅ Analyse terminée en {duration:.2f} secondes.")
-            print(f"   {len(results)} flux de trafic correspondants trouvés.")
+        # Résumé de l'analyse
+        print("\n" + "=" * 60)
+        print(f"RÉSUMÉ DE L'ANALYSE EXCEL ({duration:.2f} secondes)")
+        print("=" * 60)
+        print(f"Total des flux analysés     : {total_flows}")
+        print(f"Flux avec des résultats     : {successful_flows}")
+        print(f"Flux sans résultat          : {failed_flows}")
+        print(f"Total des résultats trouvés : {total_results}")
+        
+        # Si nous avons des résultats, les exporter et afficher un aperçu
+        if all_results:
+            # Créer un nom de fichier pour l'export
+            base_filename = f"excel_analysis_{timestamp}"
+            export_excel_results(all_results, base_filename)
             
-            # Filtrer les résultats pour ne garder que les flux qui correspondent à la demande
-            filtered_results = []
-            for result in results:
-                src_ip = result.get('src', {}).get('ip')
-                dst_ip = result.get('dst', {}).get('ip')
-                proto = result.get('service', {}).get('proto')
-                result_port = result.get('service', {}).get('port')
-                
-                # Vérifier si ce résultat correspond à l'un des flux demandés
-                for flow in flows:
-                    if (src_ip == flow['source'] and 
-                        dst_ip == flow['destination'] and 
-                        proto == flow['protocol'] and
-                        (flow['port'] is None or result_port == flow['port'])):
-                        filtered_results.append(result)
-                        break
-            
-            if filtered_results:
-                print(f"   {len(filtered_results)} flux correspondent exactement à votre demande.")
-                FlowDisplayFormatter.format_flow_table(filtered_results)
-            else:
-                print("   Aucun flux ne correspond exactement à votre demande.")
+            # Afficher un aperçu des résultats
+            print("\nAperçu des résultats:")
+            FlowDisplayFormatter.format_flow_table(all_results, min(20, len(all_results)))
         else:
-            print(f"\n❌ Échec de l'analyse après {duration:.2f} secondes.")
+            print("\nAucun résultat trouvé pour tous les flux analysés.")
     
     except ImportError:
         print("❌ Erreur: Module pandas non disponible.")
         print("   Installez-le avec: pip install pandas openpyxl")
     except Exception as e:
         print(f"❌ Erreur lors de l'analyse du fichier Excel: {e}")
+        import traceback
+        print(traceback.format_exc())
+
+def export_excel_results(results, base_filename):
+    """
+    Exporte les résultats d'analyse Excel dans des fichiers au format CSV et JSON.
+    
+    Args:
+        results (list): Liste des résultats d'analyse
+        base_filename (str): Nom de base pour les fichiers d'export
+    """
+    output_dir = get_output_dir()
+    
+    # Exporter au format JSON
+    json_filename = f"{base_filename}.json"
+    json_path = get_file_path(json_filename, 'output')
+    
+    try:
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        print(f"\n✅ Résultats exportés au format JSON: {json_path}")
+    except Exception as e:
+        print(f"❌ Erreur lors de l'export JSON: {e}")
+    
+    # Exporter au format CSV
+    csv_filename = f"{base_filename}.csv"
+    csv_path = get_file_path(csv_filename, 'output')
+    
+    try:
+        # Créer un DataFrame pandas avec les champs principaux
+        rows = []
+        for result in results:
+            # Extraire les données source et destination
+            src = result.get('src', {})
+            dst = result.get('dst', {})
+            service = result.get('service', {})
+            excel_metadata = result.get('excel_metadata', {})
+            
+            # Extraire les informations de règles si disponibles
+            rules = result.get('rules', {})
+            rule_href = None
+            rule_name = None
+            
+            # Gérer les deux formats de rules
+            if isinstance(rules, dict) and 'sec_policy' in rules:
+                sec_policy = rules.get('sec_policy', {})
+                if sec_policy:
+                    rule_href = sec_policy.get('href')
+                    rule_name = sec_policy.get('name')
+            elif isinstance(rules, list) and len(rules) > 0:
+                rule = rules[0]
+                rule_href = rule.get('href')
+                rule_name = rule_href.split('/')[-1] if rule_href else None
+            
+            # Créer une ligne pour le CSV
+            row = {
+                # Métadonnées du fichier Excel
+                'excel_row': excel_metadata.get('excel_row', ''),
+                'excel_source': excel_metadata.get('source_ip', ''),
+                'excel_dest': excel_metadata.get('dest_ip', ''),
+                'excel_proto': excel_metadata.get('protocol', ''),
+                'excel_port': excel_metadata.get('port', ''),
+                
+                # Données du résultat de l'API
+                'src_ip': src.get('ip', ''),
+                'dst_ip': dst.get('ip', ''),
+                'service_name': service.get('name', ''),
+                'service_port': service.get('port', ''),
+                'service_proto': service.get('proto', ''),
+                'policy_decision': result.get('policy_decision', ''),
+                'flow_direction': result.get('flow_direction', ''),
+                'num_connections': result.get('num_connections', ''),
+                'rule_href': rule_href if rule_href else '',
+                'rule_name': rule_name if rule_name else ''
+            }
+            rows.append(row)
+        
+        # Créer le DataFrame et l'exporter en CSV
+        df = pd.DataFrame(rows)
+        df.to_csv(csv_path, index=False, encoding='utf-8')
+        print(f"✅ Résultats exportés au format CSV: {csv_path}")
+    except Exception as e:
+        print(f"❌ Erreur lors de l'export CSV: {e}")
