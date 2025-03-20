@@ -154,11 +154,12 @@ def analyze_excel_flows(file_path, perform_deep_analysis=False):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         all_results = []  # Pour stocker tous les résultats
         
-        # Informations sur la période d'analyse
-        start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-        end_date = datetime.now().strftime('%Y-%m-%d')
+        # Dates d'analyse définies
+        start_date = "2020-03-02T01:59:41.557Z"
+        # Format ISO 8601 pour end_date
+        end_date = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         
-        print(f"\nPériode d'analyse: {start_date} à {end_date} (7 derniers jours)")
+        print(f"\nPériode d'analyse: {start_date} à {end_date}")
         if perform_deep_analysis:
             print("L'analyse de règles approfondie sera effectuée pour chaque flux.")
         
