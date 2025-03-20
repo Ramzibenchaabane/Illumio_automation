@@ -313,19 +313,30 @@ def export_excel_results(results, base_filename):
             
             # Extraire les informations de règles si disponibles
             rules = result.get('rules', {})
-            rule_href = None
-            rule_name = None
+            rule_hrefs = []
+            rule_names = []
             
             # Gérer les deux formats de rules
             if isinstance(rules, dict) and 'sec_policy' in rules:
+                # Format ancien (avant update_rules)
                 sec_policy = rules.get('sec_policy', {})
                 if sec_policy:
                     rule_href = sec_policy.get('href')
                     rule_name = sec_policy.get('name')
+                    if rule_href:
+                        rule_hrefs.append(rule_href)
+                    if rule_name:
+                        rule_names.append(rule_name)
             elif isinstance(rules, list) and len(rules) > 0:
-                rule = rules[0]
-                rule_href = rule.get('href')
-                rule_name = rule_href.split('/')[-1] if rule_href else None
+                # Format nouveau (après update_rules) - peut contenir plusieurs règles
+                for rule in rules:
+                    rule_href = rule.get('href')
+                    if rule_href:
+                        rule_hrefs.append(rule_href)
+                        # Extraire le nom de la règle à partir de l'URL si non fourni
+                        rule_name = rule.get('name', rule_href.split('/')[-1] if rule_href else None)
+                        if rule_name:
+                            rule_names.append(rule_name)
             
             # Créer une ligne pour le CSV
             row = {
@@ -345,8 +356,8 @@ def export_excel_results(results, base_filename):
                 'policy_decision': result.get('policy_decision', ''),
                 'flow_direction': result.get('flow_direction', ''),
                 'num_connections': result.get('num_connections', ''),
-                'rule_href': rule_href if rule_href else '',
-                'rule_name': rule_name if rule_name else ''
+                'rule_href': '; '.join(rule_hrefs) if rule_hrefs else '',
+                'rule_name': '; '.join(rule_names) if rule_names else ''
             }
             rows.append(row)
         
