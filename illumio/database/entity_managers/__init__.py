@@ -1,4 +1,4 @@
-#illumio/database/entity_manager/__init__.py
+#illumio/database/entity_managers/__init__.py
 """
 Gestionnaires d'entités pour la base de données Illumio.
 """

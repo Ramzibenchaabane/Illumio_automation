@@ -58,6 +58,7 @@ class IllumioDatabase:
                 self.ip_lists,
                 self.services,
                 self.label_groups,
+                self.rule_sets,
                 self.traffic,
                 self.async_operations
             ]

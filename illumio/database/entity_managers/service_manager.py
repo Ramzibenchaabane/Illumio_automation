@@ -1,4 +1,4 @@
-# illumio/database/entity_manager/service_manager.py
+# illumio/database/entity_managers/service_manager.py
 """
 Gestionnaire des services dans la base de données.
 """

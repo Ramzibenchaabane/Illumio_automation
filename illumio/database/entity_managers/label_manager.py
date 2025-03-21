@@ -1,4 +1,4 @@
-# illumio/database/entity_manager/label_manager.py
+# illumio/database/entity_managers/label_manager.py
 """
 Gestionnaire des labels dans la base de données.
 """

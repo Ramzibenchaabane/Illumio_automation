@@ -1,4 +1,4 @@
-# illuminio/database/entity_manager/workload_manager.py
+# illumio/database/entity_managers/workload_manager.py
 """
 Gestionnaire des workloads dans la base de données.
 """
