@@ -42,6 +42,11 @@ class IllumioSyncManager:
                 'fetch': self.api.get_label_groups,
                 'store': self.db.store_label_groups,
                 'name': 'groupes de labels'
+            },
+            'rule_sets': {
+                'fetch': self.api.get_rule_sets,
+                'store': self.db.store_rule_sets,
+                'name': 'ensembles de règles'
             }
         }
     

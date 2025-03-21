@@ -27,7 +27,8 @@ def sync_database_menu():
         "Synchroniser uniquement les labels",
         "Synchroniser uniquement les listes d'IPs",
         "Synchroniser uniquement les services",
-        "Synchroniser uniquement les groupes de labels"
+        "Synchroniser uniquement les groupes de labels",
+        "Synchroniser uniquement les ensembles de règles"  # Nouvelle option
     ]
     
     print_menu(options)
@@ -52,7 +53,8 @@ def sync_database_menu():
             3: ['labels'],
             4: ['ip_lists'],
             5: ['services'],
-            6: ['label_groups']
+            6: ['label_groups'],
+            7: ['rule_sets']  # Ajout de l'option rule_sets
         }
         
         # Synchroniser les types de ressources spécifiés

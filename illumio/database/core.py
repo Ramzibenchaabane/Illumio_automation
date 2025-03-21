@@ -10,7 +10,8 @@ from .entity_managers import (
     LabelManager, 
     IPListManager, 
     ServiceManager, 
-    LabelGroupManager
+    LabelGroupManager,
+    RuleSetManager
 )
 from .traffic_manager import TrafficManager
 from .async_manager import AsyncOperationManager
@@ -30,6 +31,7 @@ class IllumioDatabase:
         self.ip_lists = IPListManager(db_file)
         self.services = ServiceManager(db_file)
         self.label_groups = LabelGroupManager(db_file)
+        self.rule_sets = RuleSetManager(db_file) 
         self.traffic = TrafficManager(db_file)
         self.async_operations = AsyncOperationManager(db_file)
     
@@ -136,3 +138,19 @@ class IllumioDatabase:
     def get_traffic_flows(self, query_id):
         """Récupère les flux de trafic pour une requête spécifique."""
         return self.traffic.get_flows(query_id)
+
+    def store_rule_sets(self, rule_sets, pversion='draft'):
+        """Stocke les rule sets dans la base de données."""
+        return self.rule_sets.store_rule_sets(rule_sets, pversion)
+
+    def get_rule_by_href(self, rule_href):
+        """Récupère une règle par son href complet."""
+        return self.rule_sets.get_rule_by_href(rule_href)
+
+    def get_rules_by_hrefs(self, rule_hrefs):
+        """Récupère plusieurs règles par leurs hrefs."""
+        return self.rule_sets.get_rules_by_hrefs(rule_hrefs)
+
+    def get_rule_set(self, rule_set_id):
+        """Récupère un rule set par son ID."""
+        return self.rule_sets.get_rule_set_by_id(rule_set_id)

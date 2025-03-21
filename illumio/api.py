@@ -168,3 +168,75 @@ class IllumioAPI(IllumioAPICore):
         """
         params = {'offset': offset, 'limit': limit}
         return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download', params=params)
+    
+    def get_rule_sets(self, pversion='draft', params=None):
+        """
+        Récupère la liste des rule sets.
+        
+        Args:
+            pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
+            params (dict): Paramètres additionnels pour la requête.
+            
+        Returns:
+            list: Liste des rule sets avec leurs règles
+        """
+        return self.get_resource('rule_sets', pversion=pversion, params=params)
+
+    def get_rule_set(self, rule_set_id, pversion='draft'):
+        """
+        Récupère les détails d'un rule set spécifique.
+        
+        Args:
+            rule_set_id (str): ID du rule set
+            pversion (str): Version de la politique ('draft' ou 'active')
+            
+        Returns:
+            dict: Détails du rule set et ses règles
+        """
+        return self._make_request('get', f'sec_policy/{pversion}/rule_sets/{rule_set_id}')
+
+    def get_rule(self, rule_set_id, rule_id, pversion='draft'):
+        """
+        Récupère les détails d'une règle spécifique.
+        
+        Args:
+            rule_set_id (str): ID du rule set parent
+            rule_id (str): ID de la règle
+            pversion (str): Version de la politique ('draft' ou 'active')
+            
+        Returns:
+            dict: Détails de la règle
+        """
+        return self._make_request('get', f'sec_policy/{pversion}/rule_sets/{rule_set_id}/sec_rules/{rule_id}')
+
+    def get_rule_by_href(self, rule_href):
+        """
+        Récupère les détails d'une règle à partir de son href complet.
+        
+        Args:
+            rule_href (str): Href complet de la règle (par exemple /api/v2/orgs/1/sec_policy/active/rule_sets/123/sec_rules/456)
+            
+        Returns:
+            dict: Détails de la règle
+        """
+        # Extraire les composants du href
+        components = rule_href.split('/')
+        
+        # Vérifier si le href a le bon format
+        if len(components) < 10 or components[-4] != 'rule_sets' or components[-2] != 'sec_rules':
+            print(f"Format de href invalide: {rule_href}")
+            return None
+        
+        # Extraire la version de la politique (draft ou active)
+        pversion = components[-6]
+        # Extraire l'ID du rule set
+        rule_set_id = components[-3]
+        # Extraire l'ID de la règle
+        rule_id = components[-1]
+        
+        # Appeler l'API pour récupérer la règle
+        try:
+            return self.get_rule(rule_set_id, rule_id, pversion)
+        except Exception as e:
+            print(f"Erreur lors de la récupération de la règle {rule_id}: {e}")
+            return None
