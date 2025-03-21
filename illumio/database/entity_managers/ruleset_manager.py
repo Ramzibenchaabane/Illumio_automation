@@ -122,7 +122,8 @@ class RuleSetManager:
                             providers_json,
                             consumers_json,
                             ingress_services_json,
-                            rule.get('resolve_labels_as'),
+                            # Convertir resolve_labels_as en chaîne JSON s'il s'agit d'un dictionnaire
+                            json.dumps(rule.get('resolve_labels_as')) if isinstance(rule.get('resolve_labels_as'), dict) else rule.get('resolve_labels_as'),
                             1 if rule.get('sec_connect') else 0,
                             1 if rule.get('unscoped_consumers') else 0,
                             json.dumps(rule)
