@@ -61,11 +61,19 @@ def format_query_table(queries: List[Dict[str, Any]]) -> None:
     print("-" * 90)
     
     for query in queries:
-        query_id = query.get('id')
-        name = query.get('query_name')
-        status = query.get('status')
+        # Récupérer les valeurs avec get() et des valeurs par défaut
+        query_id = query.get('id', 'N/A')
+        name = query.get('query_name', 'N/A')
+        status = query.get('status', 'N/A')
         rules_status = query.get('rules_status', 'N/A')
-        created_at = query.get('created_at')
+        created_at = query.get('created_at', 'N/A')
+        
+        # Conversion explicite en chaînes pour éviter les problèmes de formatage
+        query_id = str(query_id) if query_id is not None else 'N/A'
+        name = str(name) if name is not None else 'N/A'
+        status = str(status) if status is not None else 'N/A'
+        rules_status = str(rules_status) if rules_status is not None else 'N/A'
+        created_at = str(created_at) if created_at is not None else 'N/A'
         
         # Limiter la longueur du nom pour l'affichage
         if name and len(name) > 28:
@@ -87,11 +95,19 @@ def format_numbered_query_table(queries: List[Dict[str, Any]]) -> None:
     print("-" * 90)
     
     for i, query in enumerate(queries, 1):
-        query_id = query.get('id')
-        name = query.get('query_name')
-        status = query.get('status')
+        # Récupérer les valeurs avec get() et des valeurs par défaut
+        query_id = query.get('id', 'N/A')
+        name = query.get('query_name', 'N/A')
+        status = query.get('status', 'N/A')
         rules_status = query.get('rules_status', 'N/A')
-        created_at = query.get('created_at')
+        created_at = query.get('created_at', 'N/A')
+        
+        # Conversion explicite en chaînes pour éviter les problèmes de formatage
+        query_id = str(query_id) if query_id is not None else 'N/A'
+        name = str(name) if name is not None else 'N/A'
+        status = str(status) if status is not None else 'N/A'
+        rules_status = str(rules_status) if rules_status is not None else 'N/A'
+        created_at = str(created_at) if created_at is not None else 'N/A'
         
         # Limiter la longueur du nom pour l'affichage
         if name and len(name) > 28:
@@ -117,7 +133,23 @@ def get_query_choice(queries: List[Dict[str, Any]], prompt: str = "\nEntrez l'ID
         return None
     
     # Afficher la liste des requêtes
-    format_query_table(queries)
+    try:
+        format_query_table(queries)
+    except Exception as e:
+        print(f"Erreur lors de l'affichage du tableau: {e}")
+        # Affichage de secours
+        print("\nAnalyses disponibles:")
+        for i, query in enumerate(queries, 1):
+            try:
+                query_id = query.get('id', 'N/A') 
+                query_id = str(query_id) if query_id is not None else 'N/A'
+                
+                name = query.get('query_name', 'N/A')
+                name = str(name) if name is not None else 'N/A'
+                
+                print(f"{i}. ID: {query_id}, Nom: {name}")
+            except:
+                print(f"{i}. [Données d'analyse invalides]")
     
     # Demander le choix
     query_id = input(prompt)
@@ -126,7 +158,13 @@ def get_query_choice(queries: List[Dict[str, Any]], prompt: str = "\nEntrez l'ID
         return None
     
     # Vérifier que la requête existe
-    if not any(q.get('id') == query_id for q in queries):
+    found = False
+    for query in queries:
+        if str(query.get('id', '')) == query_id:
+            found = True
+            break
+    
+    if not found:
         print(f"ID d'analyse invalide: {query_id}")
         return None
     
@@ -148,7 +186,23 @@ def get_numbered_query_choice(queries: List[Dict[str, Any]], prompt: str = "\nEn
         return None
     
     # Afficher la liste des requêtes numérotées
-    format_numbered_query_table(queries)
+    try:
+        format_numbered_query_table(queries)
+    except Exception as e:
+        print(f"Erreur lors de l'affichage du tableau: {e}")
+        # Affichage de secours
+        print("\nAnalyses disponibles:")
+        for i, query in enumerate(queries, 1):
+            try:
+                query_id = query.get('id', 'N/A')
+                query_id = str(query_id) if query_id is not None else 'N/A'
+                
+                name = query.get('query_name', 'N/A')
+                name = str(name) if name is not None else 'N/A'
+                
+                print(f"{i}. ID: {query_id}, Nom: {name}")
+            except:
+                print(f"{i}. [Données d'analyse invalides]")
     
     # Demander le choix
     choice = input(prompt)

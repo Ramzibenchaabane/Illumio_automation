@@ -368,7 +368,7 @@ def export_excel_results(results, base_filename):
         df.to_csv(csv_path, index=False, encoding='utf-8')
         print(f"✅ Résultats exportés au format CSV: {csv_path}")
         
-        # ---- NOUVELLE PARTIE : EXPORT EXCEL AVEC FEUILLE DE RÈGLES ----
+        # ---- CRÉATION DU FICHIER EXCEL AVEC FEUILLE DE RÈGLES ----
         # Créer une version Excel avec une deuxième feuille pour les règles
         excel_filename = f"{base_filename}.xlsx"
         excel_path = get_file_path(excel_filename, 'output')
@@ -376,117 +376,225 @@ def export_excel_results(results, base_filename):
         # Exporter d'abord le DataFrame principal
         df.to_excel(excel_path, sheet_name='Flux', index=False)
         
-        # Initialiser l'analyseur de trafic pour accéder à l'API et à la base de données
+        # Initialiser l'analyseur de trafic pour accéder à la base de données
         analyzer = initialize_analyzer()
-        if analyzer:
-            # Extraire tous les hrefs uniques des règles
-            rule_hrefs = []
-            for result in results:
-                # Extraire les hrefs de règles
-                rules = result.get('rules', {})
+        if not analyzer:
+            print("Impossible d'initialiser l'analyseur de trafic pour récupérer les règles.")
+            return
+        
+        # Extraire tous les hrefs uniques des règles
+        print("\nRecherche des règles dans les résultats...")
+        rule_hrefs = set()
+        
+        # Déboguer l'extraction des règles
+        for i, result in enumerate(results):
+            try:
+                # Vérifier dans les champs directs
+                if 'rule_href' in result and result['rule_href']:
+                    hrefs = str(result['rule_href']).split('; ')
+                    for href in hrefs:
+                        if href and href != 'N/A':
+                            rule_hrefs.add(href)
+                            print(f"  Règle trouvée dans rule_href: {href}")
                 
-                if isinstance(rules, dict) and 'sec_policy' in rules:
-                    sec_policy = rules.get('sec_policy', {})
-                    if sec_policy and 'href' in sec_policy:
-                        rule_hrefs.append(sec_policy['href'])
-                elif isinstance(rules, list):
-                    for rule in rules:
-                        if isinstance(rule, dict) and 'href' in rule:
-                            rule_hrefs.append(rule['href'])
-                            
-                # Vérifier aussi dans rule_href direct
-                if result.get('rule_href'):
-                    hrefs = result['rule_href'].split('; ')
-                    rule_hrefs.extend([href for href in hrefs if href])
-            
-            # Supprimer les doublons
-            unique_rule_hrefs = list(set(rule_hrefs))
-            print(f"\nIdentification de {len(unique_rule_hrefs)} règles uniques...")
-            
-            if unique_rule_hrefs:
-                # Récupérer les détails des règles
-                rules = []
+                # Vérifier dans l'objet rules
+                if 'rules' in result:
+                    rules = result['rules']
+                    # Format 1: dictionnaire avec sec_policy
+                    if isinstance(rules, dict) and 'sec_policy' in rules:
+                        sec_policy = rules['sec_policy']
+                        if isinstance(sec_policy, dict) and 'href' in sec_policy:
+                            rule_hrefs.add(sec_policy['href'])
+                            print(f"  Règle trouvée dans rules.sec_policy: {sec_policy['href']}")
+                    # Format 2: liste de règles
+                    elif isinstance(rules, list):
+                        for rule in rules:
+                            if isinstance(rule, dict) and 'href' in rule:
+                                rule_hrefs.add(rule['href'])
+                                print(f"  Règle trouvée dans rules[]: {rule['href']}")
                 
-                for href in unique_rule_hrefs:
-                    # Vérifier d'abord dans la base de données
-                    if hasattr(analyzer.db, 'get_rule_by_href'):
-                        rule = analyzer.db.get_rule_by_href(href)
-                        if rule:
-                            rules.append(rule)
-                        else:
-                            # Essayer avec l'API
+                # Vérifier dans raw_data si c'est une chaîne JSON
+                if 'raw_data' in result and isinstance(result['raw_data'], str):
+                    try:
+                        raw_data = json.loads(result['raw_data'])
+                        if isinstance(raw_data, dict) and 'rules' in raw_data:
+                            rules = raw_data['rules']
+                            if isinstance(rules, dict) and 'sec_policy' in rules:
+                                sec_policy = rules['sec_policy']
+                                if isinstance(sec_policy, dict) and 'href' in sec_policy:
+                                    rule_hrefs.add(sec_policy['href'])
+                                    print(f"  Règle trouvée dans raw_data.rules.sec_policy: {sec_policy['href']}")
+                            elif isinstance(rules, list):
+                                for rule in rules:
+                                    if isinstance(rule, dict) and 'href' in rule:
+                                        rule_hrefs.add(rule['href'])
+                                        print(f"  Règle trouvée dans raw_data.rules[]: {rule['href']}")
+                    except json.JSONDecodeError:
+                        pass  # Ignorer les erreurs de parsing JSON
+            except Exception as e:
+                print(f"Erreur lors de l'extraction des règles pour le résultat {i}: {e}")
+        
+        # Convertir en liste et filtrer les valeurs vides ou invalides
+        unique_rule_hrefs = [href for href in rule_hrefs if href and href != 'N/A']
+        print(f"\n{len(unique_rule_hrefs)} règles uniques identifiées.")
+        
+        if not unique_rule_hrefs:
+            print("Aucune règle identifiée, pas de feuille 'Règles' ajoutée.")
+            return
+        
+        # Récupérer les détails des règles depuis la base de données uniquement
+        rules = []
+        for href in unique_rule_hrefs:
+            # Extraire l'ID de la règle à partir de l'URL
+            try:
+                rule_id = href.split('/')[-1]
+                print(f"Recherche de la règle {rule_id} dans la base de données...")
+                
+                # Utiliser directement la méthode get_rule_by_href
+                if hasattr(analyzer.db, 'get_rule_by_href'):
+                    rule = analyzer.db.get_rule_by_href(href)
+                    if rule:
+                        print(f"  Règle {rule_id} trouvée dans la base de données")
+                        rules.append(rule)
+                    else:
+                        print(f"  Règle {rule_id} non trouvée dans la base de données")
+                        # Ajouter un placeholder pour cette règle
+                        rules.append({
+                            'raw_data': {'href': href, 'id': rule_id},
+                            'rule_id': rule_id,
+                            'description': f'Règle {rule_id} non disponible dans la base de données'
+                        })
+            except Exception as e:
+                print(f"Erreur lors de la recherche de la règle {href}: {e}")
+        
+        if not rules:
+            print("Aucune règle récupérée, pas de feuille 'Règles' ajoutée.")
+            return
+        
+        # Préparer les données pour le DataFrame des règles
+        print(f"\nPréparation des données pour {len(rules)} règles...")
+        rule_rows = []
+        for i, rule in enumerate(rules):
+            try:
+                # Extraire les données brutes
+                raw_data = rule.get('raw_data', {})
+                if not isinstance(raw_data, dict):
+                    if hasattr(raw_data, '__dict__'):
+                        raw_data = raw_data.__dict__
+                    else:
+                        print(f"  Règle {i}: raw_data n'est pas un dictionnaire, conversion impossible.")
+                        raw_data = {'description': 'Format de données invalide'}
+                
+                # Créer une ligne pour chaque règle
+                rule_row = {
+                    'rule_id': rule.get('rule_id') or raw_data.get('id') or raw_data.get('href', '').split('/')[-1] if raw_data.get('href') else f'rule_{i}',
+                    'description': rule.get('description') or raw_data.get('description', 'Pas de description'),
+                    'enabled': 'Oui' if raw_data.get('enabled') else 'Non',
+                    'href': rule.get('href') or raw_data.get('href', 'N/A')
+                }
+                
+                # Extraire les providers (fournisseurs)
+                providers = []
+                try:
+                    if 'providers' in raw_data and isinstance(raw_data['providers'], (list, str)):
+                        # Si c'est une chaîne JSON, la convertir
+                        if isinstance(raw_data['providers'], str):
                             try:
-                                api_rule = analyzer.api.get_rule_by_href(href)
-                                if api_rule:
-                                    rules.append(api_rule)
-                            except Exception as e:
-                                print(f"Erreur lors de la récupération de la règle {href}: {e}")
-                                # Ajouter un placeholder pour cette règle
-                                rules.append({
-                                    'href': href,
-                                    'rule_id': href.split('/')[-1],
-                                    'description': 'Règle non disponible'
-                                })
-                
-                # Préparer les données pour le DataFrame des règles
-                rule_rows = []
-                for rule in rules:
-                    # Extraire les données brutes ou utiliser directement le dictionnaire
-                    raw_data = rule.get('raw_data', rule)
+                                providers_data = json.loads(raw_data['providers'])
+                                if isinstance(providers_data, list):
+                                    providers = providers_data
+                            except json.JSONDecodeError:
+                                print(f"  Règle {i}: Impossible de parser les providers.")
+                        else:
+                            providers = raw_data['providers']
                     
-                    # Créer une ligne pour chaque règle
-                    rule_row = {
-                        'rule_id': raw_data.get('href', '').split('/')[-1] if raw_data.get('href') else None,
-                        'description': raw_data.get('description', ''),
-                        'enabled': 'Oui' if raw_data.get('enabled') else 'Non',
-                        'href': raw_data.get('href', '')
-                    }
-                    
-                    # Traiter les providers (fournisseurs)
-                    providers = raw_data.get('providers', [])
                     provider_descriptions = []
-                    
                     for provider in providers:
+                        if not isinstance(provider, dict):
+                            continue
+                            
                         if 'actors' in provider and provider['actors'] == 'ams':
                             provider_descriptions.append('Tous les systèmes gérés')
-                        elif 'label' in provider:
+                        elif 'label' in provider and isinstance(provider['label'], dict):
                             label = provider['label']
                             provider_descriptions.append(f"Label: {label.get('key')}:{label.get('value')}")
-                        elif 'label_group' in provider:
-                            provider_descriptions.append(f"Groupe de labels: {provider['label_group'].get('href', '').split('/')[-1]}")
-                        elif 'workload' in provider:
-                            provider_descriptions.append(f"Workload: {provider['workload'].get('href', '').split('/')[-1]}")
-                        elif 'ip_list' in provider:
-                            provider_descriptions.append(f"Liste IP: {provider['ip_list'].get('name', provider['ip_list'].get('href', '').split('/')[-1])}")
+                        elif 'label_group' in provider and isinstance(provider['label_group'], dict):
+                            lg = provider['label_group']
+                            provider_descriptions.append(f"Groupe de labels: {lg.get('href', '').split('/')[-1]}")
+                        elif 'workload' in provider and isinstance(provider['workload'], dict):
+                            wl = provider['workload']
+                            provider_descriptions.append(f"Workload: {wl.get('href', '').split('/')[-1]}")
+                        elif 'ip_list' in provider and isinstance(provider['ip_list'], dict):
+                            ip = provider['ip_list']
+                            provider_descriptions.append(f"Liste IP: {ip.get('name') or ip.get('href', '').split('/')[-1]}")
                     
-                    rule_row['providers'] = '; '.join(provider_descriptions)
+                    rule_row['providers'] = '; '.join(provider_descriptions) if provider_descriptions else 'N/A'
+                except Exception as e:
+                    print(f"  Règle {i}: Erreur lors de l'extraction des providers: {e}")
+                    rule_row['providers'] = 'Erreur'
+                
+                # Extraire les consumers (consommateurs)
+                consumers = []
+                try:
+                    if 'consumers' in raw_data and isinstance(raw_data['consumers'], (list, str)):
+                        # Si c'est une chaîne JSON, la convertir
+                        if isinstance(raw_data['consumers'], str):
+                            try:
+                                consumers_data = json.loads(raw_data['consumers'])
+                                if isinstance(consumers_data, list):
+                                    consumers = consumers_data
+                            except json.JSONDecodeError:
+                                print(f"  Règle {i}: Impossible de parser les consumers.")
+                        else:
+                            consumers = raw_data['consumers']
                     
-                    # Traiter les consumers (consommateurs)
-                    consumers = raw_data.get('consumers', [])
                     consumer_descriptions = []
-                    
                     for consumer in consumers:
+                        if not isinstance(consumer, dict):
+                            continue
+                            
                         if 'actors' in consumer and consumer['actors'] == 'ams':
                             consumer_descriptions.append('Tous les systèmes gérés')
-                        elif 'label' in consumer:
+                        elif 'label' in consumer and isinstance(consumer['label'], dict):
                             label = consumer['label']
                             consumer_descriptions.append(f"Label: {label.get('key')}:{label.get('value')}")
-                        elif 'label_group' in consumer:
-                            consumer_descriptions.append(f"Groupe de labels: {consumer['label_group'].get('href', '').split('/')[-1]}")
-                        elif 'workload' in consumer:
-                            consumer_descriptions.append(f"Workload: {consumer['workload'].get('href', '').split('/')[-1]}")
-                        elif 'ip_list' in consumer:
-                            consumer_descriptions.append(f"Liste IP: {consumer['ip_list'].get('name', consumer['ip_list'].get('href', '').split('/')[-1])}")
+                        elif 'label_group' in consumer and isinstance(consumer['label_group'], dict):
+                            lg = consumer['label_group']
+                            consumer_descriptions.append(f"Groupe de labels: {lg.get('href', '').split('/')[-1]}")
+                        elif 'workload' in consumer and isinstance(consumer['workload'], dict):
+                            wl = consumer['workload']
+                            consumer_descriptions.append(f"Workload: {wl.get('href', '').split('/')[-1]}")
+                        elif 'ip_list' in consumer and isinstance(consumer['ip_list'], dict):
+                            ip = consumer['ip_list']
+                            consumer_descriptions.append(f"Liste IP: {ip.get('name') or ip.get('href', '').split('/')[-1]}")
                     
-                    rule_row['consumers'] = '; '.join(consumer_descriptions)
+                    rule_row['consumers'] = '; '.join(consumer_descriptions) if consumer_descriptions else 'N/A'
+                except Exception as e:
+                    print(f"  Règle {i}: Erreur lors de l'extraction des consumers: {e}")
+                    rule_row['consumers'] = 'Erreur'
+                
+                # Extraire les services
+                services = []
+                try:
+                    if 'ingress_services' in raw_data and isinstance(raw_data['ingress_services'], (list, str)):
+                        # Si c'est une chaîne JSON, la convertir
+                        if isinstance(raw_data['ingress_services'], str):
+                            try:
+                                services_data = json.loads(raw_data['ingress_services'])
+                                if isinstance(services_data, list):
+                                    services = services_data
+                            except json.JSONDecodeError:
+                                print(f"  Règle {i}: Impossible de parser les services.")
+                        else:
+                            services = raw_data['ingress_services']
                     
-                    # Traiter les services
-                    services = raw_data.get('ingress_services', [])
                     service_descriptions = []
-                    
                     for service in services:
+                        if not isinstance(service, dict):
+                            continue
+                            
                         if 'href' in service:
-                            service_id = service['href'].split('/')[-1]
+                            service_id = service['href'].split('/')[-1] if service['href'] else None
                             service_descriptions.append(f"Service: {service.get('name', service_id)}")
                         elif 'proto' in service:
                             proto = service['proto']
@@ -494,25 +602,38 @@ def export_excel_results(results, base_filename):
                             port_text = f":{port}" if port else ""
                             service_descriptions.append(f"Proto {proto}{port_text}")
                     
-                    rule_row['services'] = '; '.join(service_descriptions)
-                    
-                    # Ajouter cette règle aux données
-                    rule_rows.append(rule_row)
+                    rule_row['services'] = '; '.join(service_descriptions) if service_descriptions else 'N/A'
+                except Exception as e:
+                    print(f"  Règle {i}: Erreur lors de l'extraction des services: {e}")
+                    rule_row['services'] = 'Erreur'
                 
-                # Créer un DataFrame pour les règles
-                rules_df = pd.DataFrame(rule_rows)
-                
-                # Ajouter le DataFrame des règles comme une nouvelle feuille dans le fichier Excel
-                with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
-                    rules_df.to_excel(writer, sheet_name='Règles', index=False)
-                
-                print(f"✅ {len(rule_rows)} règles exportées dans la feuille 'Règles' du fichier {excel_path}")
-            else:
-                print("Aucune règle identifiée, pas de feuille 'Règles' ajoutée.")
-        else:
-            print("Impossible d'initialiser l'analyseur de trafic pour récupérer les règles.")
+                # Ajouter cette règle aux données
+                rule_rows.append(rule_row)
+                print(f"  Règle {i}: Ajoutée avec succès.")
+            except Exception as e:
+                print(f"  Règle {i}: Erreur générale lors du traitement: {e}")
+                # Ignorer cette règle et continuer
         
-        print(f"✅ Résultats exportés au format Excel: {excel_path}")
+        # Vérifier qu'il reste des règles à exporter
+        if not rule_rows:
+            print("Aucune règle n'a pu être traitée, pas de feuille 'Règles' ajoutée.")
+            return
+        
+        # Créer un DataFrame pour les règles
+        try:
+            print(f"Création du DataFrame des règles avec {len(rule_rows)} lignes...")
+            rules_df = pd.DataFrame(rule_rows)
+            
+            print("Ajout de la feuille 'Règles' dans le fichier Excel...")
+            # Ajouter le DataFrame des règles comme une nouvelle feuille dans le fichier Excel
+            with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+                rules_df.to_excel(writer, sheet_name='Règles', index=False)
+            
+            print(f"✅ {len(rule_rows)} règles exportées dans la feuille 'Règles' du fichier {excel_path}")
+        except Exception as e:
+            print(f"❌ Erreur lors de la création de la feuille 'Règles': {e}")
+            import traceback
+            traceback.print_exc()
         
     except ImportError:
         print("❌ Erreur: Modules pandas ou openpyxl non disponibles.")
