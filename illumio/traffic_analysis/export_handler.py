@@ -15,6 +15,13 @@ from illumio.utils.directory_manager import get_output_dir, get_file_path
 from .base_components import TrafficAnalysisBaseComponent
 from .result_processing import TrafficResultProcessor
 
+# Importation des parseurs
+from ..parsers.rule_parser import RuleParser
+
+# Importation des convertisseurs
+from ..converters.traffic_flow_converter import TrafficFlowConverter
+from ..converters.rule_converter import RuleConverter
+
 class TrafficExportHandler(TrafficAnalysisBaseComponent):
     """
     Manages export of traffic analysis results to different file formats.
@@ -43,7 +50,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         if not os.path.isabs(filename):
             filename = get_file_path(os.path.basename(filename), 'output')
         
-        # Process raw flows for export
+        # Process raw flows for export - utiliser le parseur pour normaliser les données
         processed_flows = TrafficResultProcessor.process_raw_flows(flows)
         
         try:
@@ -91,7 +98,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             bool: True if export successful
         """
         try:
-            # Define CSV columns
+            # Define CSV columns based on the traffic flow converter's field schema
             fieldnames = [
                 'src_ip', 'src_workload_id', 
                 'dst_ip', 'dst_workload_id', 
@@ -107,8 +114,8 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 writer.writeheader()
                 
                 for flow in flows:
-                    # Extract only the specified fields
-                    csv_row = {field: flow.get(field, '') for field in fieldnames}
+                    # Convertir le flux en format d'export CSV
+                    csv_row = self._format_flow_for_csv(flow, fieldnames)
                     writer.writerow(csv_row)
             
             print(f"✅ Export CSV terminé. Fichier sauvegardé: {filename}")
@@ -116,6 +123,21 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         except Exception as e:
             print(f"Erreur lors de l'export CSV: {e}")
             return False
+    
+    def _format_flow_for_csv(self, flow: Dict[str, Any], fieldnames: List[str]) -> Dict[str, Any]:
+        """
+        Format a flow for CSV export, extracting only the specified fields.
+        
+        Args:
+            flow (dict): Flow to format
+            fieldnames (list): List of field names to extract
+            
+        Returns:
+            Dictionary ready for CSV writing
+        """
+        # Extract only the specified fields
+        csv_row = {field: flow.get(field, '') for field in fieldnames}
+        return csv_row
     
     def export_query_results(self, 
                              query_id: str, 
@@ -139,15 +161,18 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             print(f"Aucun flux trouvé pour la requête {query_id}.")
             return False
         
+        # Process the flows using the parser
+        processed_flows = TrafficResultProcessor.process_raw_flows(flows)
+        
         # Generate default filename if not provided
         if not output_file:
             output_dir = get_output_dir()
             output_file = os.path.join(output_dir, f"traffic_analysis_{query_id}_{datetime.now().strftime('%Y%m%d')}")
         
         # Perform export
-        return self.export_flows(flows, output_file, format_type)
+        return self.export_flows(processed_flows, output_file, format_type)
     
-    def extract_rule_hrefs(self, flows):
+    def extract_rule_hrefs(self, flows: List[Dict[str, Any]]) -> List[str]:
         """
         Extrait tous les hrefs uniques des règles à partir des flux de trafic.
         
@@ -157,64 +182,15 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         Returns:
             list: Liste des hrefs uniques des règles
         """
-        unique_rule_hrefs = set()
-        
-        for flow in flows:
-            # Différentes façons de trouver les hrefs des règles dans différentes structures
-            
-            # 1. Chercher dans le champ 'rule_href'
-            if isinstance(flow, dict) and 'rule_href' in flow and flow['rule_href']:
-                unique_rule_hrefs.add(flow['rule_href'])
-            
-            # 2. Chercher dans le champ 'rules' contenant sec_policy
-            if isinstance(flow, dict) and 'rules' in flow:
-                rules = flow['rules']
-                if isinstance(rules, dict) and 'sec_policy' in rules:
-                    sec_policy = rules['sec_policy']
-                    if isinstance(sec_policy, dict) and 'href' in sec_policy:
-                        unique_rule_hrefs.add(sec_policy['href'])
-                
-                # 3. Chercher dans le champ 'rules' s'il est une liste
-                elif isinstance(rules, list):
-                    for rule in rules:
-                        if isinstance(rule, dict) and 'href' in rule:
-                            unique_rule_hrefs.add(rule['href'])
-            
-            # 4. Chercher dans raw_data si présent
-            if isinstance(flow, dict) and 'raw_data' in flow and flow['raw_data']:
-                raw_data = flow['raw_data']
-                
-                # Si raw_data est une chaîne JSON, la parser
-                if isinstance(raw_data, str):
-                    try:
-                        import json
-                        raw_data = json.loads(raw_data)
-                    except:
-                        raw_data = {}
-                
-                # Chercher dans rules de raw_data
-                if isinstance(raw_data, dict) and 'rules' in raw_data:
-                    rules = raw_data['rules']
-                    if isinstance(rules, dict) and 'sec_policy' in rules:
-                        sec_policy = rules['sec_policy']
-                        if isinstance(sec_policy, dict) and 'href' in sec_policy:
-                            unique_rule_hrefs.add(sec_policy['href'])
-                    elif isinstance(rules, list):
-                        for rule in rules:
-                            if isinstance(rule, dict) and 'href' in rule:
-                                unique_rule_hrefs.add(rule['href'])
-        
-        # Filtrer les valeurs non valides et les valeurs 'N/A'
-        valid_hrefs = [href for href in unique_rule_hrefs if href and href != 'N/A']
-        
-        return valid_hrefs
-
-    def get_rule_details(self, rule_hrefs):
+        # Utiliser le parseur de règles pour extraire les hrefs
+        return RuleParser.extract_rule_hrefs(flows)
+    
+    def get_rule_details(self, rule_hrefs: List[str]) -> List[Dict[str, Any]]:
         """
         Récupère les détails des règles à partir de leurs hrefs.
         
         Args:
-            rule_hrefs (list): Liste des hrefs de règles
+            rule_hrefs (list): Liste des hrefs des règles
             
         Returns:
             list: Liste des détails de règles
@@ -230,31 +206,37 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             # Déterminer quels hrefs manquent
             found_hrefs = set()
             for rule in rules:
-                if rule and 'raw_data' in rule and rule['raw_data'] and 'href' in rule['raw_data']:
-                    found_hrefs.add(rule['raw_data']['href'])
+                if rule and 'raw_data' in rule and rule['raw_data']:
+                    # Extraire le href en utilisant le parseur
+                    href = None
+                    if isinstance(rule['raw_data'], str):
+                        try:
+                            raw_data = json.loads(rule['raw_data'])
+                            href = raw_data.get('href')
+                        except json.JSONDecodeError:
+                            pass
+                    elif isinstance(rule['raw_data'], dict):
+                        href = rule['raw_data'].get('href')
+                    
+                    if href:
+                        found_hrefs.add(href)
             
             missing_hrefs = [href for href in rule_hrefs if href not in found_hrefs]
             
             # Récupérer les règles manquantes depuis l'API
             for href in missing_hrefs:
                 try:
-                    rule = self.api.get_rule_by_href(href)
-                    if rule:
-                        rules.append({
-                            'raw_data': rule,
-                            'id': rule.get('href', '').split('/')[-1] if rule.get('href') else None,
-                            'description': rule.get('description'),
-                            'enabled': rule.get('enabled'),
-                            'providers': rule.get('providers'),
-                            'consumers': rule.get('consumers'),
-                            'ingress_services': rule.get('ingress_services')
-                        })
+                    raw_rule = self.api.get_rule_by_href(href)
+                    if raw_rule:
+                        # Convertir la règle en format de base de données
+                        rule = RuleConverter.from_dict(raw_rule)
+                        rules.append(rule)
                 except Exception as e:
                     print(f"Erreur lors de la récupération de la règle {href}: {e}")
         
         return rules
-
-    def export_rules_to_excel(self, output_file, rules):
+    
+    def export_rules_to_excel(self, output_file: str, rules: List[Dict[str, Any]]) -> bool:
         """
         Exporte les règles dans une feuille Excel.
         
@@ -266,92 +248,64 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             bool: True si l'export a réussi, False sinon
         """
         try:
-            
             # Vérifier que le fichier est un .xlsx
             if not output_file.endswith('.xlsx'):
                 output_file = output_file.replace('.csv', '.xlsx')
                 if not output_file.endswith('.xlsx'):
                     output_file += '.xlsx'
             
-            # Préparer les données pour le dataframe
-            rules_data = []
-            
+            # Convertir les règles en format adapté pour Excel en utilisant les parseurs
+            rule_rows = []
             for rule in rules:
-                rule_data = {}
+                # Utiliser le convertisseur de règles pour normaliser les données
+                normalized_rule = RuleConverter.from_dict(rule)
                 
-                # Récupérer les données brutes ou utiliser directement le dictionnaire
-                raw_data = rule.get('raw_data', rule)
+                # Créer une ligne pour chaque règle
+                rule_row = {
+                    'rule_id': normalized_rule.get('id', 'N/A'),
+                    'description': normalized_rule.get('description', 'Pas de description'),
+                    'enabled': 'Oui' if normalized_rule.get('enabled', False) else 'Non',
+                    'href': normalized_rule.get('href', 'N/A')
+                }
                 
-                # Extraire des informations de base
-                rule_data['rule_id'] = raw_data.get('href', '').split('/')[-1] if raw_data.get('href') else None
-                rule_data['description'] = raw_data.get('description', '')
-                rule_data['enabled'] = 'Oui' if raw_data.get('enabled') else 'Non'
+                # Formater les providers, consumers et services
+                providers = normalized_rule.get('providers', [])
+                consumers = normalized_rule.get('consumers', [])
+                services = normalized_rule.get('services', [])
                 
-                # Traiter les providers (fournisseurs)
-                providers = raw_data.get('providers', [])
-                provider_descriptions = []
-                
-                for provider in providers:
-                    if 'actors' in provider and provider['actors'] == 'ams':
-                        provider_descriptions.append('Tous les systèmes gérés')
-                    elif 'label' in provider:
-                        label = provider['label']
-                        provider_descriptions.append(f"Label: {label.get('key')}:{label.get('value')}")
-                    elif 'label_group' in provider:
-                        provider_descriptions.append(f"Groupe de labels: {provider['label_group'].get('href', '').split('/')[-1]}")
-                    elif 'workload' in provider:
-                        provider_descriptions.append(f"Workload: {provider['workload'].get('href', '').split('/')[-1]}")
-                    elif 'ip_list' in provider:
-                        provider_descriptions.append(f"Liste IP: {provider['ip_list'].get('name', provider['ip_list'].get('href', '').split('/')[-1])}")
-                
-                rule_data['providers'] = '; '.join(provider_descriptions)
-                
-                # Traiter les consumers (consommateurs)
-                consumers = raw_data.get('consumers', [])
-                consumer_descriptions = []
-                
-                for consumer in consumers:
-                    if 'actors' in consumer and consumer['actors'] == 'ams':
-                        consumer_descriptions.append('Tous les systèmes gérés')
-                    elif 'label' in consumer:
-                        label = consumer['label']
-                        consumer_descriptions.append(f"Label: {label.get('key')}:{label.get('value')}")
-                    elif 'label_group' in consumer:
-                        consumer_descriptions.append(f"Groupe de labels: {consumer['label_group'].get('href', '').split('/')[-1]}")
-                    elif 'workload' in consumer:
-                        consumer_descriptions.append(f"Workload: {consumer['workload'].get('href', '').split('/')[-1]}")
-                    elif 'ip_list' in consumer:
-                        consumer_descriptions.append(f"Liste IP: {consumer['ip_list'].get('name', consumer['ip_list'].get('href', '').split('/')[-1])}")
-                
-                rule_data['consumers'] = '; '.join(consumer_descriptions)
-                
-                # Traiter les services
-                services = raw_data.get('ingress_services', [])
+                provider_descriptions = [f"{p.get('type')}:{p.get('value')}" for p in providers if p.get('type') and p.get('value')]
+                consumer_descriptions = [f"{c.get('type')}:{c.get('value')}" for c in consumers if c.get('type') and c.get('value')]
                 service_descriptions = []
                 
                 for service in services:
-                    if 'href' in service:
-                        service_id = service['href'].split('/')[-1]
-                        service_descriptions.append(f"Service: {service.get('name', service_id)}")
-                    elif 'proto' in service:
-                        proto = service['proto']
-                        port = service.get('port', '')
+                    service_type = service.get('type')
+                    if service_type == 'service':
+                        service_descriptions.append(f"Service: {service.get('name', service.get('id', 'N/A'))}")
+                    elif service_type == 'proto':
+                        proto = service.get('proto')
+                        port = service.get('port')
                         port_text = f":{port}" if port else ""
                         service_descriptions.append(f"Proto {proto}{port_text}")
                 
-                rule_data['services'] = '; '.join(service_descriptions)
+                rule_row['providers'] = '; '.join(provider_descriptions) if provider_descriptions else 'N/A'
+                rule_row['consumers'] = '; '.join(consumer_descriptions) if consumer_descriptions else 'N/A'
+                rule_row['services'] = '; '.join(service_descriptions) if service_descriptions else 'N/A'
                 
-                # Traiter les informations supplémentaires
-                rule_data['resolve_labels_as'] = raw_data.get('resolve_labels_as', '')
-                rule_data['sec_connect'] = 'Oui' if raw_data.get('sec_connect') else 'Non'
-                rule_data['unscoped_consumers'] = 'Oui' if raw_data.get('unscoped_consumers') else 'Non'
-                rule_data['href'] = raw_data.get('href', '')
+                # Ajouter d'autres informations
+                rule_row['resolve_labels_as'] = normalized_rule.get('resolve_labels_as', 'N/A')
+                rule_row['sec_connect'] = 'Oui' if normalized_rule.get('sec_connect', False) else 'Non'
+                rule_row['unscoped_consumers'] = 'Oui' if normalized_rule.get('unscoped_consumers', False) else 'Non'
                 
-                # Ajouter cette règle à la liste
-                rules_data.append(rule_data)
+                # Ajouter cette règle aux données
+                rule_rows.append(rule_row)
             
-            # Créer un DataFrame pandas
-            rules_df = pd.DataFrame(rules_data)
+            # Vérifier qu'il reste des règles à exporter
+            if not rule_rows:
+                print("Aucune règle n'a pu être traitée, pas de feuille 'Règles' ajoutée.")
+                return False
+            
+            # Créer un DataFrame pour les règles
+            rules_df = pd.DataFrame(rule_rows)
             
             # Définir l'ordre des colonnes
             columns_order = [
@@ -385,7 +339,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 # Le fichier n'existe pas, créer un nouveau fichier Excel
                 rules_df.to_excel(output_file, sheet_name='Règles', index=False)
             
-            print(f"✅ {len(rules_data)} règles exportées dans la feuille 'Règles' du fichier {output_file}")
+            print(f"✅ {len(rule_rows)} règles exportées dans la feuille 'Règles' du fichier {output_file}")
             return True
             
         except ImportError:

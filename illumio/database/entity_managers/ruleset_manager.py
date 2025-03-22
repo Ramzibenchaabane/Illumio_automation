@@ -4,12 +4,17 @@ Gestionnaire des rule sets dans la base de données.
 """
 import sqlite3
 import json
+from typing import List, Dict, Any, Optional, Union
+
 from ...db_utils import db_connection
+from ...converters.rule_converter import RuleConverter
+from ...converters.entity_converter import EntityConverter
+from ...models.rule import Rule, RuleSet
 
 class RuleSetManager:
     """Gère les opérations de base de données pour les rule sets et règles."""
     
-    def __init__(self, db_file):
+    def __init__(self, db_file: str):
         """Initialise le gestionnaire de rule sets.
         
         Args:
@@ -17,7 +22,7 @@ class RuleSetManager:
         """
         self.db_file = db_file
     
-    def init_tables(self):
+    def init_tables(self) -> bool:
         """Initialise les tables nécessaires pour les rule sets et règles.
         
         Returns:
@@ -61,7 +66,7 @@ class RuleSetManager:
             print(f"Erreur lors de l'initialisation des tables rule sets: {e}")
             return False
     
-    def store_rule_sets(self, rule_sets, pversion='draft'):
+    def store_rule_sets(self, rule_sets: List[Dict[str, Any]], pversion: str = 'draft') -> bool:
         """Stocke les rule sets et leurs règles dans la base de données.
         
         Args:
@@ -73,61 +78,34 @@ class RuleSetManager:
         """
         try:
             with db_connection(self.db_file) as (conn, cursor):
-                for rule_set in rule_sets:
-                    # Extraire l'ID depuis l'URL href
-                    rule_set_id = rule_set.get('href', '').split('/')[-1] if rule_set.get('href') else None
+                # Pour chaque rule set
+                for rule_set_data in rule_sets:
+                    # Convertir le rule set en format DB
+                    db_rule_set = RuleConverter.to_db_rule_set(rule_set_data)
                     
+                    # Ajouter la version de politique
+                    db_rule_set['pversion'] = pversion
+                    
+                    # Insérer le rule set
+                    query, params = EntityConverter.prepare_for_insert("rule_sets", db_rule_set)
+                    cursor.execute(query, params)
+                    
+                    # Extraire l'ID du rule set
+                    rule_set_id = db_rule_set.get('id')
                     if not rule_set_id:
                         continue
                     
-                    # Insérer ou mettre à jour le rule set
-                    cursor.execute('''
-                    INSERT OR REPLACE INTO rule_sets (id, name, description, enabled, pversion, raw_data)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (
-                        rule_set_id,
-                        rule_set.get('name'),
-                        rule_set.get('description'),
-                        1 if rule_set.get('enabled') else 0,
-                        pversion,
-                        json.dumps(rule_set)
-                    ))
+                    # Extraire les règles du rule set
+                    rules = RuleConverter.extract_rules_from_rule_set(rule_set_data)
                     
-                    # Traiter les règles de ce rule set
-                    rules = rule_set.get('rules', [])
-                    for rule in rules:
-                        rule_id = rule.get('href', '').split('/')[-1] if rule.get('href') else None
+                    # Stocker chaque règle
+                    for rule_data in rules:
+                        # Convertir la règle en format DB
+                        db_rule = RuleConverter.to_db_dict(rule_data, rule_set_id)
                         
-                        if not rule_id:
-                            continue
-                            
-                        # Convertir les listes de providers, consumers et services en JSON
-                        providers_json = json.dumps(rule.get('providers', []))
-                        consumers_json = json.dumps(rule.get('consumers', []))
-                        ingress_services_json = json.dumps(rule.get('ingress_services', []))
-                        
-                        cursor.execute('''
-                        INSERT OR REPLACE INTO rules (
-                            id, rule_set_id, description, enabled, 
-                            providers, consumers, ingress_services, 
-                            resolve_labels_as, sec_connect, unscoped_consumers, 
-                            raw_data
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            rule_id,
-                            rule_set_id,
-                            rule.get('description'),
-                            1 if rule.get('enabled') else 0,
-                            providers_json,
-                            consumers_json,
-                            ingress_services_json,
-                            # Convertir resolve_labels_as en chaîne JSON s'il s'agit d'un dictionnaire
-                            json.dumps(rule.get('resolve_labels_as')) if isinstance(rule.get('resolve_labels_as'), dict) else rule.get('resolve_labels_as'),
-                            1 if rule.get('sec_connect') else 0,
-                            1 if rule.get('unscoped_consumers') else 0,
-                            json.dumps(rule)
-                        ))
+                        # Insérer la règle
+                        query, params = EntityConverter.prepare_for_insert("rules", db_rule)
+                        cursor.execute(query, params)
             
             return True
         
@@ -135,7 +113,7 @@ class RuleSetManager:
             print(f"Erreur lors du stockage des rule sets: {e}")
             return False
     
-    def get_rule_by_href(self, rule_href):
+    def get_rule_by_href(self, rule_href: str) -> Optional[Dict[str, Any]]:
         """Récupère une règle par son href complet.
         
         Args:
@@ -146,7 +124,7 @@ class RuleSetManager:
         """
         try:
             # Extraire l'ID de la règle depuis l'URL href
-            rule_id = rule_href.split('/')[-1] if rule_href else None
+            rule_id = EntityConverter.extract_id_from_href(rule_href)
             
             if not rule_id:
                 return None
@@ -160,25 +138,15 @@ class RuleSetManager:
                 if not row:
                     return None
                 
-                rule = dict(row)
-                
-                # Convertir les données JSON en dictionnaires
-                if rule.get('raw_data'):
-                    rule['raw_data'] = json.loads(rule['raw_data'])
-                if rule.get('providers'):
-                    rule['providers'] = json.loads(rule['providers'])
-                if rule.get('consumers'):
-                    rule['consumers'] = json.loads(rule['consumers'])
-                if rule.get('ingress_services'):
-                    rule['ingress_services'] = json.loads(rule['ingress_services'])
-                
+                # Convertir l'enregistrement en dictionnaire
+                rule = RuleConverter.from_db_row(dict(row))
                 return rule
         
         except sqlite3.Error as e:
             print(f"Erreur lors de la récupération de la règle: {e}")
             return None
     
-    def get_rules_by_hrefs(self, rule_hrefs):
+    def get_rules_by_hrefs(self, rule_hrefs: List[str]) -> List[Dict[str, Any]]:
         """Récupère plusieurs règles par leurs hrefs.
         
         Args:
@@ -191,7 +159,8 @@ class RuleSetManager:
             return []
             
         # Extraire les IDs des règles depuis les URLs hrefs
-        rule_ids = [href.split('/')[-1] for href in rule_hrefs if href]
+        rule_ids = [EntityConverter.extract_id_from_href(href) for href in rule_hrefs if href]
+        rule_ids = [rule_id for rule_id in rule_ids if rule_id]  # Filtrer les None
         
         if not rule_ids:
             return []
@@ -207,18 +176,8 @@ class RuleSetManager:
                 
                 rules = []
                 for row in cursor.fetchall():
-                    rule = dict(row)
-                    
-                    # Convertir les données JSON en dictionnaires
-                    if rule.get('raw_data'):
-                        rule['raw_data'] = json.loads(rule['raw_data'])
-                    if rule.get('providers'):
-                        rule['providers'] = json.loads(rule['providers'])
-                    if rule.get('consumers'):
-                        rule['consumers'] = json.loads(rule['consumers'])
-                    if rule.get('ingress_services'):
-                        rule['ingress_services'] = json.loads(rule['ingress_services'])
-                    
+                    # Convertir l'enregistrement en dictionnaire
+                    rule = RuleConverter.from_db_row(dict(row))
                     rules.append(rule)
                 
                 return rules
@@ -227,7 +186,7 @@ class RuleSetManager:
             print(f"Erreur lors de la récupération des règles: {e}")
             return []
             
-    def get_rule_set_by_id(self, rule_set_id):
+    def get_rule_set_by_id(self, rule_set_id: str) -> Optional[Dict[str, Any]]:
         """Récupère un rule set par son ID.
         
         Args:
@@ -238,6 +197,7 @@ class RuleSetManager:
         """
         try:
             with db_connection(self.db_file) as (conn, cursor):
+                # Récupérer le rule set
                 cursor.execute('''
                 SELECT * FROM rule_sets WHERE id = ?
                 ''', (rule_set_id,))
@@ -246,11 +206,8 @@ class RuleSetManager:
                 if not row:
                     return None
                 
-                rule_set = dict(row)
-                
-                # Convertir les données JSON en dictionnaires
-                if rule_set.get('raw_data'):
-                    rule_set['raw_data'] = json.loads(rule_set['raw_data'])
+                # Convertir l'enregistrement en dictionnaire
+                rule_set = RuleConverter.from_db_rule_set(dict(row))
                 
                 # Récupérer les règles de ce rule set
                 cursor.execute('''
@@ -259,20 +216,11 @@ class RuleSetManager:
                 
                 rules = []
                 for rule_row in cursor.fetchall():
-                    rule = dict(rule_row)
-                    
-                    # Convertir les données JSON en dictionnaires
-                    if rule.get('raw_data'):
-                        rule['raw_data'] = json.loads(rule['raw_data'])
-                    if rule.get('providers'):
-                        rule['providers'] = json.loads(rule['providers'])
-                    if rule.get('consumers'):
-                        rule['consumers'] = json.loads(rule['consumers'])
-                    if rule.get('ingress_services'):
-                        rule['ingress_services'] = json.loads(rule['ingress_services'])
-                    
+                    # Convertir l'enregistrement en dictionnaire
+                    rule = RuleConverter.from_db_row(dict(rule_row))
                     rules.append(rule)
                 
+                # Ajouter les règles au rule set
                 rule_set['rules'] = rules
                 
                 return rule_set
@@ -280,3 +228,84 @@ class RuleSetManager:
         except sqlite3.Error as e:
             print(f"Erreur lors de la récupération du rule set: {e}")
             return None
+    
+    def get_rule_by_id(self, rule_id: str) -> Optional[Dict[str, Any]]:
+        """Récupère une règle par son ID.
+        
+        Args:
+            rule_id (str): ID de la règle
+            
+        Returns:
+            dict: Données de la règle ou None si non trouvée
+        """
+        try:
+            with db_connection(self.db_file) as (conn, cursor):
+                cursor.execute('''
+                SELECT * FROM rules WHERE id = ?
+                ''', (rule_id,))
+                
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                
+                # Convertir l'enregistrement en dictionnaire
+                rule = RuleConverter.from_db_row(dict(row))
+                return rule
+                
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la récupération de la règle: {e}")
+            return None
+    
+    def get_all_rule_sets(self, pversion: str = None) -> List[Dict[str, Any]]:
+        """Récupère tous les rule sets.
+        
+        Args:
+            pversion (str, optional): Version de la politique pour filtrer
+            
+        Returns:
+            list: Liste des rule sets
+        """
+        try:
+            with db_connection(self.db_file) as (conn, cursor):
+                if pversion:
+                    cursor.execute('''
+                    SELECT * FROM rule_sets WHERE pversion = ?
+                    ''', (pversion,))
+                else:
+                    cursor.execute('''
+                    SELECT * FROM rule_sets
+                    ''')
+                
+                rule_sets = []
+                for row in cursor.fetchall():
+                    # Convertir l'enregistrement en dictionnaire
+                    rule_set = RuleConverter.from_db_rule_set(dict(row))
+                    rule_sets.append(rule_set)
+                
+                return rule_sets
+                
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la récupération des rule sets: {e}")
+            return []
+    
+    def to_model(self, rule_data: Dict[str, Any]) -> Rule:
+        """Convertit un dictionnaire de règle en modèle.
+        
+        Args:
+            rule_data (dict): Données de la règle
+            
+        Returns:
+            Rule: Instance du modèle Rule
+        """
+        return Rule.from_dict(rule_data)
+    
+    def rule_set_to_model(self, rule_set_data: Dict[str, Any]) -> RuleSet:
+        """Convertit un dictionnaire de rule set en modèle.
+        
+        Args:
+            rule_set_data (dict): Données du rule set
+            
+        Returns:
+            RuleSet: Instance du modèle RuleSet
+        """
+        return RuleSet.from_dict(rule_set_data)

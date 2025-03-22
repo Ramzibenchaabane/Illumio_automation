@@ -4,12 +4,15 @@ Gestionnaire des services dans la base de données.
 """
 import sqlite3
 import json
+from typing import List, Dict, Any, Optional, Union, Tuple
+
 from ...db_utils import db_connection
+from ...converters.entity_converter import EntityConverter
 
 class ServiceManager:
     """Gère les opérations de base de données pour les services."""
     
-    def __init__(self, db_file):
+    def __init__(self, db_file: str):
         """Initialise le gestionnaire de services.
         
         Args:
@@ -17,7 +20,7 @@ class ServiceManager:
         """
         self.db_file = db_file
     
-    def init_tables(self):
+    def init_tables(self) -> bool:
         """Initialise les tables nécessaires pour les services.
         
         Returns:
@@ -52,7 +55,7 @@ class ServiceManager:
             print(f"Erreur lors de l'initialisation des tables services: {e}")
             return False
     
-    def store(self, services):
+    def store(self, services: List[Dict[str, Any]]) -> bool:
         """Stocke les services dans la base de données.
         
         Args:
@@ -68,33 +71,39 @@ class ServiceManager:
                 
                 for service in services:
                     # Extraire l'ID depuis l'URL href
-                    service_id = service.get('href', '').split('/')[-1] if service.get('href') else None
+                    service_id = EntityConverter.extract_id_from_href(service.get('href', ''))
                     
                     if not service_id:
                         continue
                     
+                    # Préparer les données du service pour la base de données
+                    db_service = {
+                        'id': service_id,
+                        'name': service.get('name'),
+                        'description': service.get('description'),
+                        'raw_data': json.dumps(service) if isinstance(service, dict) else service
+                    }
+                    
                     # Insérer ou mettre à jour le service
-                    cursor.execute('''
-                    INSERT OR REPLACE INTO services (id, name, description, raw_data)
-                    VALUES (?, ?, ?, ?)
-                    ''', (
-                        service_id,
-                        service.get('name'),
-                        service.get('description'),
-                        json.dumps(service)
-                    ))
+                    query, params = EntityConverter.prepare_for_insert("services", db_service)
+                    cursor.execute(query, params)
                     
                     # Insérer les ports de service
-                    for service_port in service.get('service_ports', []):
+                    service_ports = service.get('service_ports', [])
+                    for service_port in service_ports:
+                        if not isinstance(service_port, dict):
+                            continue
+                            
+                        # Extraire les données du port
+                        port = service_port.get('port')
+                        to_port = service_port.get('to_port', port)  # Si to_port n'est pas défini, utiliser port
+                        protocol = service_port.get('proto')
+                        
+                        # Insérer le port
                         cursor.execute('''
                         INSERT INTO service_ports (service_id, port, to_port, protocol)
                         VALUES (?, ?, ?, ?)
-                        ''', (
-                            service_id,
-                            service_port.get('port'),
-                            service_port.get('to_port', service_port.get('port')),  # Si to_port n'est pas défini, utiliser port
-                            service_port.get('proto')
-                        ))
+                        ''', (service_id, port, to_port, protocol))
             
             return True
         
@@ -102,7 +111,7 @@ class ServiceManager:
             print(f"Erreur lors du stockage des services: {e}")
             return False
     
-    def get(self, service_id):
+    def get(self, service_id: str) -> Optional[Dict[str, Any]]:
         """Récupère un service par son ID avec ses ports.
         
         Args:
@@ -122,14 +131,25 @@ class ServiceManager:
                 if not service_row:
                     return None
                 
-                service = dict(service_row)
+                # Convertir l'enregistrement en dictionnaire
+                service = EntityConverter.from_db_row(service_row)
                 
                 # Récupérer les ports du service
                 cursor.execute('''
                 SELECT * FROM service_ports WHERE service_id = ?
                 ''', (service_id,))
                 
-                service['service_ports'] = [dict(row) for row in cursor.fetchall()]
+                # Transformer les rangées en liste de dictionnaires
+                service_ports = []
+                for row in cursor.fetchall():
+                    if hasattr(row, 'keys'):
+                        service_port = {key: row[key] for key in row.keys()}
+                    else:
+                        service_port = dict(row)
+                    service_ports.append(service_port)
+                
+                # Ajouter les ports au service
+                service['service_ports'] = service_ports
                 
                 return service
                 
@@ -137,7 +157,7 @@ class ServiceManager:
             print(f"Erreur lors de la récupération du service: {e}")
             return None
     
-    def get_all(self):
+    def get_all(self) -> List[Dict[str, Any]]:
         """Récupère tous les services.
         
         Returns:
@@ -149,13 +169,39 @@ class ServiceManager:
                 SELECT * FROM services
                 ''')
                 
-                return [dict(row) for row in cursor.fetchall()]
+                services = []
+                for row in cursor.fetchall():
+                    # Convertir l'enregistrement en dictionnaire
+                    service = EntityConverter.from_db_row(row)
+                    services.append(service)
+                
+                # Pour chaque service, récupérer ses ports
+                for service in services:
+                    service_id = service.get('id')
+                    if service_id:
+                        cursor.execute('''
+                        SELECT * FROM service_ports WHERE service_id = ?
+                        ''', (service_id,))
+                        
+                        # Transformer les rangées en liste de dictionnaires
+                        service_ports = []
+                        for port_row in cursor.fetchall():
+                            if hasattr(port_row, 'keys'):
+                                service_port = {key: port_row[key] for key in port_row.keys()}
+                            else:
+                                service_port = dict(port_row)
+                            service_ports.append(service_port)
+                        
+                        # Ajouter les ports au service
+                        service['service_ports'] = service_ports
+                
+                return services
                 
         except sqlite3.Error as e:
             print(f"Erreur lors de la récupération des services: {e}")
             return []
     
-    def find_by_port_protocol(self, port, protocol):
+    def find_by_port_protocol(self, port: int, protocol: int) -> List[Dict[str, Any]]:
         """Trouve les services par port et protocole.
         
         Args:
@@ -173,8 +219,61 @@ class ServiceManager:
                 WHERE sp.port <= ? AND sp.to_port >= ? AND sp.protocol = ?
                 ''', (port, port, protocol))
                 
-                return [dict(row) for row in cursor.fetchall()]
+                services = []
+                for row in cursor.fetchall():
+                    # Convertir l'enregistrement en dictionnaire
+                    service = EntityConverter.from_db_row(row)
+                    
+                    # Récupérer les ports du service
+                    service_id = service.get('id')
+                    if service_id:
+                        cursor.execute('''
+                        SELECT * FROM service_ports WHERE service_id = ?
+                        ''', (service_id,))
+                        
+                        # Transformer les rangées en liste de dictionnaires
+                        service_ports = []
+                        for port_row in cursor.fetchall():
+                            if hasattr(port_row, 'keys'):
+                                service_port = {key: port_row[key] for key in port_row.keys()}
+                            else:
+                                service_port = dict(port_row)
+                            service_ports.append(service_port)
+                        
+                        # Ajouter les ports au service
+                        service['service_ports'] = service_ports
+                    
+                    services.append(service)
+                
+                return services
                 
         except sqlite3.Error as e:
             print(f"Erreur lors de la recherche des services: {e}")
             return []
+    
+    def delete(self, service_id: str) -> bool:
+        """Supprime un service et ses ports par son ID.
+        
+        Args:
+            service_id (str): ID du service à supprimer
+            
+        Returns:
+            bool: True si la suppression réussit, False sinon
+        """
+        try:
+            with db_connection(self.db_file) as (conn, cursor):
+                # Supprimer les ports du service
+                cursor.execute('''
+                DELETE FROM service_ports WHERE service_id = ?
+                ''', (service_id,))
+                
+                # Supprimer le service
+                cursor.execute('''
+                DELETE FROM services WHERE id = ?
+                ''', (service_id,))
+                
+                return True
+                
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la suppression du service: {e}")
+            return False

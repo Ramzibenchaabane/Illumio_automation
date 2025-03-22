@@ -3,9 +3,12 @@
 Handles traffic query creation and management.
 """
 from datetime import datetime, timedelta
-from typing import Dict,List, Any, Optional
+from typing import Dict, List, Any, Optional
 
 from .base_components import TrafficAnalysisBaseComponent
+
+# Importation du formatter de requêtes
+from ..formatters.traffic_query_formatter import TrafficQueryFormatter
 
 class TrafficQueryHandler(TrafficAnalysisBaseComponent):
     """
@@ -35,35 +38,28 @@ class TrafficQueryHandler(TrafficAnalysisBaseComponent):
         Returns:
             Dict containing the traffic analysis query
         """
+        # Déléguer la création de la requête au formatter
+        # Pour assurer la compatibilité avec les appels existants, traiter les dates si nécessaires
         start_date, end_date = self._handle_date_range(start_date, end_date)
         
-        # Use defaults if no custom filters provided
-        if not query_name:
-            query_name = f"Traffic_Analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
-        query_data = {
-            "query_name": query_name,
-            "start_date": start_date,
-            "end_date": end_date,
-            "sources_destinations_query_op": "and",
-            "sources": {
-                "include": sources or [[{"actors": "ams"}]],
-                "exclude": []
-            },
-            "destinations": {
-                "include": destinations or [[{"actors": "ams"}]],
-                "exclude": []
-            },
-            "services": {
-                "include": services or [],
-                "exclude": []
-            },
-            "policy_decisions": ["allowed", "potentially_blocked", "blocked"],
-            "max_results": max_results,
-            "exclude_workloads_from_ip_list_query": True
-        }
-        
-        return query_data
+        # Utiliser le formatter pour créer la requête
+        if sources or destinations or services:
+            return TrafficQueryFormatter.format_custom_query(
+                query_name=query_name,
+                sources=sources,
+                destinations=destinations,
+                services=services,
+                start_date=start_date,
+                end_date=end_date,
+                max_results=max_results
+            )
+        else:
+            return TrafficQueryFormatter.format_default_query(
+                query_name=query_name,
+                start_date=start_date,
+                end_date=end_date,
+                max_results=max_results
+            )
     
     def create_specific_flow_query(self, 
                                     source_ip: str, 
@@ -84,34 +80,16 @@ class TrafficQueryHandler(TrafficAnalysisBaseComponent):
         Returns:
             Dict containing the specific flow query
         """
-        start_date, end_date = self._handle_date_range(days=days)
+        # Calculer dates de début et fin sur la base du nombre de jours
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
         
-        query_name = f"Flow_{source_ip}_to_{dest_ip}_{protocol}"
-        if port:
-            query_name += f"_port{port}"
-        
-        query_data = {
-            "query_name": query_name,
-            "start_date": start_date,
-            "end_date": end_date,
-            "sources_destinations_query_op": "and",
-            "sources": {
-                "include": [[{"ip_address": source_ip}]],
-                "exclude": []
-            },
-            "destinations": {
-                "include": [[{"ip_address": dest_ip}]],
-                "exclude": []
-            },
-            "services": {
-                "include": [
-                    {"proto": protocol, "port": port} if port 
-                    else {"proto": protocol}
-                ],
-                "exclude": []
-            },
-            "policy_decisions": ["allowed", "potentially_blocked", "blocked"],
-            "max_results": 1000
-        }
-        
-        return query_data
+        # Utiliser le formatter pour construire la requête spécifique à un flux
+        return TrafficQueryFormatter.format_specific_flow_query(
+            source_ip=source_ip,
+            dest_ip=dest_ip,
+            protocol=protocol,
+            port=port,
+            start_date=start_date,
+            end_date=end_date
+        )

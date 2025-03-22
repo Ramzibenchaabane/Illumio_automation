@@ -3,22 +3,30 @@
 Gestionnaire des workloads dans la base de données.
 """
 import sqlite3
-import json
+from typing import List, Dict, Any, Optional, Union, Tuple
+
 from ...db_utils import db_connection
+from ...converters.workload_converter import WorkloadConverter
+from ...converters.entity_converter import EntityConverter
+from ...models.workload import Workload
+from ...utils.response import ApiResponse, handle_exceptions
+
 
 class WorkloadManager:
     """Gère les opérations de base de données pour les workloads."""
     
-    def __init__(self, db_file):
-        """Initialise le gestionnaire de workloads.
+    def __init__(self, db_file: str):
+        """
+        Initialise le gestionnaire de workloads.
         
         Args:
             db_file (str): Chemin vers le fichier de base de données
         """
         self.db_file = db_file
     
-    def init_tables(self):
-        """Initialise les tables nécessaires pour les workloads.
+    def init_tables(self) -> bool:
+        """
+        Initialise les tables nécessaires pour les workloads.
         
         Returns:
             bool: True si l'initialisation réussit, False sinon
@@ -54,108 +62,374 @@ class WorkloadManager:
                     FOREIGN KEY (label_id) REFERENCES labels (id)
                 )
                 ''')
+                
+                # Table pour les interfaces de Workloads
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS workload_interfaces (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workload_id TEXT,
+                    name TEXT,
+                    address TEXT,
+                    link_state TEXT,
+                    addresses TEXT,
+                    FOREIGN KEY (workload_id) REFERENCES workloads (id)
+                )
+                ''')
+                
+                # Ajouter des index pour améliorer les performances
+                cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_workload_hostname ON workloads(hostname)
+                ''')
+                
+                cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_workload_labels ON workload_labels(workload_id, label_id)
+                ''')
+                
             return True
         except sqlite3.Error as e:
             print(f"Erreur lors de l'initialisation des tables workloads: {e}")
             return False
     
-    def store(self, workloads):
-        """Stocke les workloads dans la base de données.
+    @handle_exceptions
+    def store(self, workloads: List[Dict[str, Any]]) -> ApiResponse:
+        """
+        Stocke les workloads dans la base de données.
         
         Args:
             workloads (list): Liste des workloads à stocker
             
         Returns:
-            bool: True si l'opération réussit, False sinon
+            ApiResponse: Réponse indiquant le succès ou l'échec avec détails
         """
-        try:
-            with db_connection(self.db_file) as (conn, cursor):
-                # Vider la table des workloads-labels pour mise à jour
-                cursor.execute("DELETE FROM workload_labels")
-                
-                for workload in workloads:
-                    # Extraire l'ID depuis l'URL href
-                    workload_id = workload.get('href', '').split('/')[-1] if workload.get('href') else None
-                    
-                    if not workload_id:
-                        continue
-                    
-                    # Insérer ou mettre à jour le workload
-                    cursor.execute('''
-                    INSERT OR REPLACE INTO workloads 
-                    (id, name, hostname, description, public_ip, online, os_detail, 
-                    service_provider, data_center, data_center_zone, enforcement_mode, raw_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        workload_id,
-                        workload.get('name'),
-                        workload.get('hostname'),
-                        workload.get('description'),
-                        workload.get('public_ip'),
-                        1 if workload.get('online') else 0,
-                        workload.get('os_detail'),
-                        workload.get('service_provider'),
-                        workload.get('data_center'),
-                        workload.get('data_center_zone'),
-                        workload.get('enforcement_mode', {}).get('mode') if isinstance(workload.get('enforcement_mode'), dict) else workload.get('enforcement_mode'),
-                        json.dumps(workload)
-                    ))
-                    
-                    # Lier les labels au workload
-                    for label in workload.get('labels', []):
-                        label_id = label.get('href', '').split('/')[-1] if label.get('href') else None
-                        
-                        if label_id:
-                            cursor.execute('''
-                            INSERT INTO workload_labels (workload_id, label_id)
-                            VALUES (?, ?)
-                            ''', (workload_id, label_id))
+        with db_connection(self.db_file) as (conn, cursor):
+            # Vider la table des workloads-labels pour mise à jour
+            cursor.execute("DELETE FROM workload_labels")
+            # Vider la table des interfaces pour mise à jour
+            cursor.execute("DELETE FROM workload_interfaces")
             
-            return True
+            stored_count = 0
+            for workload_data in workloads:
+                # Convertir le workload pour la base de données
+                db_workload = WorkloadConverter.to_db_dict(workload_data)
+                
+                # S'assurer que nous avons un ID
+                workload_id = db_workload.get('id')
+                if not workload_id:
+                    continue
+                
+                # Insérer ou mettre à jour le workload
+                query, params = EntityConverter.prepare_for_insert("workloads", db_workload)
+                cursor.execute(query, params)
+                stored_count += 1
+                
+                # Extraire et stocker les labels
+                workload_labels = WorkloadConverter.extract_workload_labels(workload_data)
+                for label_relation in workload_labels:
+                    cursor.execute('''
+                    INSERT INTO workload_labels (workload_id, label_id)
+                    VALUES (?, ?)
+                    ''', (label_relation['workload_id'], label_relation['label_id']))
+                
+                # Extraire et stocker les interfaces
+                interfaces = WorkloadConverter.extract_interfaces(workload_data)
+                for interface in interfaces:
+                    query, params = EntityConverter.prepare_for_insert("workload_interfaces", interface)
+                    cursor.execute(query, params)
         
-        except sqlite3.Error as e:
-            print(f"Erreur lors du stockage des workloads: {e}")
-            return False
+        return ApiResponse.success(
+            data={"stored_count": stored_count},
+            message=f"{stored_count} workloads stockés avec succès"
+        )
     
-    def get(self, workload_id):
-        """Récupère un workload par son ID.
+    @handle_exceptions
+    def get(self, workload_id: str) -> ApiResponse:
+        """
+        Récupère un workload par son ID.
         
         Args:
             workload_id (str): ID du workload à récupérer
             
         Returns:
-            dict: Données du workload ou None si non trouvé
+            ApiResponse: Réponse contenant le workload ou une erreur
         """
-        try:
-            with db_connection(self.db_file) as (conn, cursor):
-                cursor.execute('''
-                SELECT * FROM workloads WHERE id = ?
-                ''', (workload_id,))
+        with db_connection(self.db_file) as (conn, cursor):
+            # Récupérer le workload
+            cursor.execute('''
+            SELECT * FROM workloads WHERE id = ?
+            ''', (workload_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return ApiResponse.error(
+                    message=f"Workload avec ID {workload_id} non trouvé",
+                    code=404
+                )
+            
+            # Convertir l'enregistrement en dictionnaire
+            workload = WorkloadConverter.from_db_row(row)
+            
+            # Récupérer les labels associés
+            cursor.execute('''
+            SELECT l.* FROM labels l
+            JOIN workload_labels wl ON l.id = wl.label_id
+            WHERE wl.workload_id = ?
+            ''', (workload_id,))
+            
+            labels = [dict(label_row) for label_row in cursor.fetchall()]
+            workload['labels'] = labels
+            
+            # Récupérer les interfaces
+            cursor.execute('''
+            SELECT * FROM workload_interfaces WHERE workload_id = ?
+            ''', (workload_id,))
+            
+            interfaces = []
+            for iface_row in cursor.fetchall():
+                interface = dict(iface_row)
                 
-                row = cursor.fetchone()
-                if row:
-                    return dict(row)
+                # Convertir les adresses JSON en liste
+                if 'addresses' in interface and interface['addresses']:
+                    try:
+                        import json
+                        interface['addresses'] = json.loads(interface['addresses'])
+                    except json.JSONDecodeError:
+                        interface['addresses'] = []
                 
-                return None
-                
-        except sqlite3.Error as e:
-            print(f"Erreur lors de la récupération du workload: {e}")
-            return None
+                interfaces.append(interface)
+            
+            workload['interfaces'] = interfaces
+            
+            # Convertir en modèle Workload
+            workload_model = self.to_model(workload)
+            
+            return ApiResponse.success(
+                data={
+                    "workload": workload,
+                    "model": workload_model
+                }
+            )
     
-    def get_all(self):
-        """Récupère tous les workloads.
+    @handle_exceptions
+    def get_all(self) -> ApiResponse:
+        """
+        Récupère tous les workloads.
         
         Returns:
-            list: Liste des workloads
+            ApiResponse: Réponse contenant la liste des workloads ou une erreur
         """
-        try:
-            with db_connection(self.db_file) as (conn, cursor):
+        with db_connection(self.db_file) as (conn, cursor):
+            cursor.execute('''
+            SELECT * FROM workloads
+            ''')
+            
+            workloads = []
+            for row in cursor.fetchall():
+                # Convertir l'enregistrement en dictionnaire
+                workload = WorkloadConverter.from_db_row(row)
+                workloads.append(workload)
+            
+            # Convertir en modèles
+            workload_models = [self.to_model(w) for w in workloads]
+            
+            return ApiResponse.success(
+                data={
+                    "workloads": workloads,
+                    "models": workload_models,
+                    "count": len(workloads)
+                }
+            )
+    
+    @handle_exceptions
+    def get_by_hostname(self, hostname: str) -> ApiResponse:
+        """
+        Récupère les workloads par hostname.
+        
+        Args:
+            hostname (str): Nom d'hôte à rechercher (peut contenir des wildcards %)
+            
+        Returns:
+            ApiResponse: Réponse contenant la liste des workloads ou une erreur
+        """
+        with db_connection(self.db_file) as (conn, cursor):
+            cursor.execute('''
+            SELECT * FROM workloads WHERE hostname LIKE ?
+            ''', (hostname,))
+            
+            workloads = []
+            for row in cursor.fetchall():
+                # Convertir l'enregistrement en dictionnaire
+                workload = WorkloadConverter.from_db_row(row)
+                workloads.append(workload)
+            
+            # Convertir en modèles
+            workload_models = [self.to_model(w) for w in workloads]
+            
+            return ApiResponse.success(
+                data={
+                    "workloads": workloads,
+                    "models": workload_models,
+                    "count": len(workloads)
+                },
+                message=f"{len(workloads)} workloads trouvés pour '{hostname}'"
+            )
+    
+    @handle_exceptions
+    def get_by_ip(self, ip_address: str) -> ApiResponse:
+        """
+        Récupère les workloads par adresse IP.
+        
+        Args:
+            ip_address (str): Adresse IP à rechercher
+            
+        Returns:
+            ApiResponse: Réponse contenant la liste des workloads ou une erreur
+        """
+        with db_connection(self.db_file) as (conn, cursor):
+            # Rechercher dans les champs IP principaux
+            cursor.execute('''
+            SELECT * FROM workloads WHERE public_ip = ?
+            ''', (ip_address,))
+            
+            workloads = []
+            for row in cursor.fetchall():
+                # Convertir l'enregistrement en dictionnaire
+                workload = WorkloadConverter.from_db_row(row)
+                workloads.append(workload)
+            
+            # Rechercher dans les interfaces
+            cursor.execute('''
+            SELECT w.* FROM workloads w
+            JOIN workload_interfaces i ON w.id = i.workload_id
+            WHERE i.address = ? OR i.addresses LIKE ?
+            ''', (ip_address, f'%"{ip_address}"%'))
+            
+            for row in cursor.fetchall():
+                # Vérifier si ce workload n'est pas déjà dans la liste
+                workload_id = row['id']
+                if not any(w.get('id') == workload_id for w in workloads):
+                    # Convertir l'enregistrement en dictionnaire
+                    workload = WorkloadConverter.from_db_row(row)
+                    workloads.append(workload)
+            
+            # Convertir en modèles
+            workload_models = [self.to_model(w) for w in workloads]
+            
+            return ApiResponse.success(
+                data={
+                    "workloads": workloads,
+                    "models": workload_models,
+                    "count": len(workloads)
+                },
+                message=f"{len(workloads)} workloads trouvés pour l'IP '{ip_address}'"
+            )
+    
+    @handle_exceptions
+    def get_by_label(self, key: str, value: Optional[str] = None) -> ApiResponse:
+        """
+        Récupère les workloads par label.
+        
+        Args:
+            key (str): Clé du label
+            value (str, optional): Valeur du label (si None, recherche seulement par clé)
+            
+        Returns:
+            ApiResponse: Réponse contenant la liste des workloads ou une erreur
+        """
+        with db_connection(self.db_file) as (conn, cursor):
+            if value:
+                # Recherche par clé et valeur
                 cursor.execute('''
-                SELECT * FROM workloads
-                ''')
-                
-                return [dict(row) for row in cursor.fetchall()]
-                
-        except sqlite3.Error as e:
-            print(f"Erreur lors de la récupération des workloads: {e}")
-            return []
+                SELECT w.* FROM workloads w
+                JOIN workload_labels wl ON w.id = wl.workload_id
+                JOIN labels l ON wl.label_id = l.id
+                WHERE l.key = ? AND l.value = ?
+                ''', (key, value))
+            else:
+                # Recherche par clé uniquement
+                cursor.execute('''
+                SELECT w.* FROM workloads w
+                JOIN workload_labels wl ON w.id = wl.workload_id
+                JOIN labels l ON wl.label_id = l.id
+                WHERE l.key = ?
+                ''', (key,))
+            
+            workloads = []
+            for row in cursor.fetchall():
+                # Convertir l'enregistrement en dictionnaire
+                workload = WorkloadConverter.from_db_row(row)
+                workloads.append(workload)
+            
+            # Convertir en modèles
+            workload_models = [self.to_model(w) for w in workloads]
+            
+            return ApiResponse.success(
+                data={
+                    "workloads": workloads,
+                    "models": workload_models,
+                    "count": len(workloads)
+                },
+                message=f"{len(workloads)} workloads trouvés pour le label '{key}{':' + value if value else ''}'"
+            )
+    
+    @handle_exceptions
+    def delete(self, workload_id: str) -> ApiResponse:
+        """
+        Supprime un workload par son ID.
+        
+        Args:
+            workload_id (str): ID du workload à supprimer
+            
+        Returns:
+            ApiResponse: Réponse indiquant le succès ou l'échec
+        """
+        with db_connection(self.db_file) as (conn, cursor):
+            # Supprimer les relations avec les labels
+            cursor.execute('''
+            DELETE FROM workload_labels WHERE workload_id = ?
+            ''', (workload_id,))
+            
+            # Supprimer les interfaces
+            cursor.execute('''
+            DELETE FROM workload_interfaces WHERE workload_id = ?
+            ''', (workload_id,))
+            
+            # Supprimer le workload
+            cursor.execute('''
+            DELETE FROM workloads WHERE id = ?
+            ''', (workload_id,))
+            
+            if cursor.rowcount > 0:
+                return ApiResponse.success(
+                    message=f"Workload {workload_id} supprimé avec succès"
+                )
+            else:
+                return ApiResponse.error(
+                    message=f"Workload {workload_id} non trouvé",
+                    code=404
+                )
+    
+    def to_model(self, workload_data: Dict[str, Any]) -> Workload:
+        """
+        Convertit un dictionnaire de workload en modèle.
+        
+        Args:
+            workload_data (dict): Données du workload
+            
+        Returns:
+            Workload: Instance du modèle Workload
+        """
+        # Utiliser la méthode from_dict du modèle pour créer une instance
+        return Workload.from_dict(workload_data)
+    
+    def from_model(self, workload: Workload) -> Dict[str, Any]:
+        """
+        Convertit un modèle Workload en dictionnaire.
+        
+        Args:
+            workload (Workload): Instance du modèle Workload
+            
+        Returns:
+            dict: Dictionnaire représentant le workload
+        """
+        # Utiliser la méthode to_dict du modèle pour obtenir le dictionnaire
+        return workload.to_dict()

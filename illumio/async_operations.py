@@ -6,7 +6,14 @@ Centralise la logique de soumission, surveillance et récupération des résulta
 import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Callable, Optional, List, Tuple
-from .exceptions import APIRequestError, TimeoutError, AsyncOperationError
+from .exceptions import APIRequestError, TimeoutError, AsyncOperationError, RetryError
+
+# Importation des parseurs
+from .parsers.api_response_parser import ApiResponseParser
+from .parsers.traffic_flow_parser import TrafficFlowParser
+
+# Importation des formatters
+from .formatters.traffic_query_formatter import TrafficQueryFormatter
 
 class AsyncOperation(ABC):
     """Classe abstraite pour les opérations asynchrones avec l'API Illumio."""
@@ -193,7 +200,7 @@ class AsyncOperation(ABC):
             Résultat de la fonction
             
         Raises:
-            Exception: La dernière exception rencontrée après épuisement des tentatives
+            RetryError: Encapsule la dernière exception après épuisement des tentatives
         """
         delay = initial_delay
         last_exception = None
@@ -207,7 +214,7 @@ class AsyncOperation(ABC):
                     time.sleep(delay)
                     delay *= backoff_factor
                 else:
-                    raise last_exception
+                    raise RetryError(max_retries, last_exception)
 
 
 class TrafficAnalysisOperation(AsyncOperation):
@@ -225,7 +232,7 @@ class TrafficAnalysisOperation(AsyncOperation):
         """
         response = self.api.create_async_traffic_query(data)
         
-        # CORRECTION: Extraire l'ID depuis l'URL dans le champ href
+        # Extraire l'ID depuis l'URL dans le champ href
         # Format typique: "/api/v2/orgs/1/traffic_flows/async_queries/123456"
         href = response.get('href', '')
         if not href:
@@ -233,13 +240,13 @@ class TrafficAnalysisOperation(AsyncOperation):
             print(f"Réponse complète: {response}")
             return None
             
-        # Extraire l'ID à la fin de l'URL
-        query_id = href.split('/')[-1]
+        # Extraire l'ID à la fin de l'URL en utilisant le parseur API
+        query_id = ApiResponseParser.extract_id_from_href(href)
+        
         if not query_id:
             print(f"Erreur: Impossible d'extraire l'ID depuis l'URL: {href}")
             return None
             
-        # CORRECTION: Supprimer le doublon dans l'affichage du message
         print(f"Requête asynchrone créée avec l'ID: {query_id}")
         return query_id
     
@@ -265,7 +272,9 @@ class TrafficAnalysisOperation(AsyncOperation):
         Returns:
             Résultats de l'analyse de trafic
         """
-        return self.api.get_async_traffic_query_results(operation_id)
+        raw_results = self.api.get_async_traffic_query_results(operation_id)
+        # Les résultats seront parsés par l'appelant, pour éviter de les parser deux fois
+        return raw_results
     
     def extract_status(self, response: Dict[str, Any]) -> str:
         """
@@ -308,7 +317,7 @@ class TrafficAnalysisOperation(AsyncOperation):
                            end_date: Optional[str] = None,
                            max_results: int = 10000) -> Dict[str, Any]:
         """
-        Crée une requête de trafic par défaut.
+        Crée une requête de trafic par défaut en utilisant le formatter.
         
         Args:
             query_name: Nom de la requête
@@ -319,43 +328,16 @@ class TrafficAnalysisOperation(AsyncOperation):
         Returns:
             Dictionnaire contenant la requête par défaut
         """
-        from datetime import datetime, timedelta
-        
-        # Définir les dates par défaut si non fournies
-        if not end_date:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-        if not start_date:
-            start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-        
-        # Structure de base d'une requête de trafic
-        return {
-            "query_name": query_name,
-            "start_date": start_date,
-            "end_date": end_date,
-            "sources_destinations_query_op": "and",
-            "sources": {
-                "include": [
-                    [{"actors": "ams"}]  # All Managed Systems - CORRIGÉ: tableau imbriqué
-                ],
-                "exclude": []
-            },
-            "destinations": {
-                "include": [
-                    [{"actors": "ams"}]  # All Managed Systems - CORRIGÉ: tableau imbriqué
-                ],
-                "exclude": []
-            },
-            "services": {
-                "include": [],
-                "exclude": []
-            },
-            "policy_decisions": ["allowed", "potentially_blocked", "blocked"],
-            "max_results": max_results,
-            "exclude_workloads_from_ip_list_query": True
-        }
+        # Utiliser le formatter pour créer une requête standardisée
+        return TrafficQueryFormatter.format_default_query(
+            query_name=query_name,
+            start_date=start_date,
+            end_date=end_date,
+            max_results=max_results
+        )
         
     def start_deep_rule_analysis(self, operation_id: str, label_based_rules: bool = False,
-                                offset: int = 0, limit: int = 100) -> bool:
+                               offset: int = 0, limit: int = 100) -> bool:
         """
         Lance une analyse de règles approfondie pour une opération terminée.
         
@@ -387,11 +369,14 @@ class TrafficAnalysisOperation(AsyncOperation):
         Returns:
             Résultats de l'analyse de règles
         """
-        return self.api.get_deep_rule_analysis_results(
+        raw_results = self.api.get_deep_rule_analysis_results(
             query_id=operation_id,
             offset=offset,
             limit=limit
         )
+        
+        # Utiliser le parseur pour normaliser les résultats
+        return TrafficFlowParser.parse_flows(raw_results)
     
     def monitor_deep_rule_analysis(self, operation_id: str) -> Dict[str, Any]:
         """

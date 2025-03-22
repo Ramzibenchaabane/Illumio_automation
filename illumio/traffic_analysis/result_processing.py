@@ -5,6 +5,10 @@ Processes and transforms traffic analysis results.
 import json
 from typing import List, Dict, Any, Optional
 
+# Importation des parseurs
+from ..parsers.traffic_flow_parser import TrafficFlowParser
+from ..parsers.rule_parser import RuleParser
+
 class TrafficResultProcessor:
     """
     Processes and transforms raw traffic flow results.
@@ -21,103 +25,103 @@ class TrafficResultProcessor:
         Returns:
             List of processed traffic flows
         """
-        processed_flows = []
+        # Utiliser le parseur de flux pour normaliser les données
+        return TrafficFlowParser.parse_flows(flows)
+    
+    @staticmethod
+    def extract_rule_information(rules: Any) -> Dict[str, Optional[str]]:
+        """
+        Extracts rule information from various possible formats.
         
-        for flow in flows:
-            try:
-                # Check if flow is stored as JSON string
-                if isinstance(flow.get('raw_data'), str):
-                    try:
-                        raw_data = json.loads(flow.get('raw_data', '{}'))
-                    except json.JSONDecodeError:
-                        # If JSON decoding fails, use the original flow
-                        processed_flows.append(flow)
-                        continue
-                else:
-                    # If not a JSON string, use the flow as-is
-                    raw_data = flow
-                
-                # Extract source and destination information
-                src = raw_data.get('src', {})
-                dst = raw_data.get('dst', {})
-                service = raw_data.get('service', {})
-                rules = raw_data.get('rules', {})
-                
-                # Process rule information
-                rule_info = TrafficResultProcessor._extract_rule_information(rules)
-                
-                # Create processed flow entry
-                processed_flow = {
-                    'src_ip': src.get('ip'),
-                    'src_workload_id': TrafficResultProcessor._extract_workload_id(src),
-                    'dst_ip': dst.get('ip'),
-                    'dst_workload_id': TrafficResultProcessor._extract_workload_id(dst),
-                    'service_name': service.get('name'),
-                    'service_port': service.get('port'),
-                    'service_protocol': service.get('proto'),
-                    'policy_decision': raw_data.get('policy_decision'),
-                    'flow_direction': raw_data.get('flow_direction'),
-                    'num_connections': raw_data.get('num_connections'),
-                    'first_detected': raw_data.get('timestamp_range', {}).get('first_detected'),
-                    'last_detected': raw_data.get('timestamp_range', {}).get('last_detected'),
-                    'rule_href': rule_info.get('href'),
-                    'rule_name': rule_info.get('name'),
-                    'raw_data': flow.get('raw_data') or json.dumps(raw_data)
-                }
-                
-                processed_flows.append(processed_flow)
+        Args:
+            rules (dict or list): Rules data from traffic flow
             
-            except Exception as e:
-                print(f"Erreur lors du traitement d'un flux: {e}")
-                # Optionally append the original flow if processing fails
-                processed_flows.append(flow)
-        
-        return processed_flows
-    
-    @staticmethod
-    def _extract_workload_id(entity: Dict[str, Any]) -> Optional[str]:
-        """
-        Extract workload ID from an entity (source or destination).
-        
-        Args:
-            entity (dict): Source or destination dictionary
-        
-        Returns:
-            Workload ID or None
-        """
-        workload = entity.get('workload', {})
-        href = workload.get('href', '')
-        return href.split('/')[-1] if href else None
-    
-    @staticmethod
-    def _extract_rule_information(rules: Dict[str, Any]) -> Dict[str, Optional[str]]:
-        """
-        Extract rule information from various possible formats.
-        
-        Args:
-            rules (dict): Rules dictionary from raw flow data
-        
         Returns:
             Dictionary with rule href and name
         """
-        # Default return if no rules found
-        default_rule_info = {'href': None, 'name': None}
+        # Déléguer au parseur spécialisé
+        return RuleParser.parse_rule_reference(rules)
+    
+    @staticmethod
+    def extract_rule_hrefs(flows: List[Dict[str, Any]]) -> List[str]:
+        """
+        Extracts all unique rule hrefs from traffic flows.
         
-        # Handle different rule formats
-        if isinstance(rules, dict) and 'sec_policy' in rules:
-            # Old format before update_rules
-            sec_policy = rules.get('sec_policy', {})
+        Args:
+            flows (list): List of traffic flows
+            
+        Returns:
+            List of unique rule hrefs
+        """
+        # Déléguer l'extraction au parseur de règles
+        return RuleParser.extract_rule_hrefs(flows)
+    
+    @staticmethod
+    def categorize_flows_by_decision(flows: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Categorizes flows by their policy decision.
+        
+        Args:
+            flows (list): List of traffic flows
+            
+        Returns:
+            Dictionary with policy decisions as keys and flow lists as values
+        """
+        categorized = {}
+        
+        for flow in flows:
+            decision = flow.get('policy_decision', 'unknown')
+            if decision not in categorized:
+                categorized[decision] = []
+            
+            categorized[decision].append(flow)
+        
+        return categorized
+    
+    @staticmethod
+    def summarize_flows(flows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Creates a summary of traffic flows.
+        
+        Args:
+            flows (list): List of traffic flows
+            
+        Returns:
+            Dictionary with summary information
+        """
+        if not flows:
             return {
-                'href': sec_policy.get('href'),
-                'name': sec_policy.get('name')
+                'total_flows': 0,
+                'policy_decisions': {},
+                'flows_with_rules': 0,
+                'rules_percentage': 0
             }
         
-        elif isinstance(rules, list) and rules:
-            # New format after update_rules
-            first_rule = rules[0]
-            return {
-                'href': first_rule.get('href'),
-                'name': first_rule.get('href', '').split('/')[-1]
-            }
+        # Calculer les statistiques
+        total_flows = len(flows)
         
-        return default_rule_info
+        # Compter par décision de politique
+        policy_counts = {}
+        flows_with_rules = 0
+        
+        for flow in flows:
+            # Comptabiliser par décision de politique
+            decision = flow.get('policy_decision', 'unknown')
+            if decision in policy_counts:
+                policy_counts[decision] += 1
+            else:
+                policy_counts[decision] = 1
+            
+            # Vérifier s'il y a une règle associée
+            if flow.get('rule_href'):
+                flows_with_rules += 1
+        
+        # Calculer le pourcentage de flux avec règles
+        rules_percentage = (flows_with_rules / total_flows) * 100 if total_flows > 0 else 0
+        
+        return {
+            'total_flows': total_flows,
+            'policy_decisions': policy_counts,
+            'flows_with_rules': flows_with_rules,
+            'rules_percentage': rules_percentage
+        }

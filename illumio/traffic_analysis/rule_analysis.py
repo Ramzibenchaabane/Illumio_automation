@@ -8,6 +8,13 @@ from typing import Dict, Any, Optional, List, Union
 
 from .base_components import TrafficAnalysisBaseComponent
 
+# Importations pour les parseurs
+from ..parsers.traffic_flow_parser import TrafficFlowParser
+from ..parsers.rule_parser import RuleParser
+
+# Importations pour les formatters
+from ..formatters.rule_query_formatter import RuleQueryFormatter
+
 class DeepRuleAnalyzer(TrafficAnalysisBaseComponent):
     """
     Performs in-depth analysis of security rules for traffic flows.
@@ -37,13 +44,14 @@ class DeepRuleAnalyzer(TrafficAnalysisBaseComponent):
                 print(f"❌ La requête de trafic {query_id} n'est pas terminée. Impossible de lancer l'analyse de règles.")
                 return None
 
-            # Initiate deep rule analysis
+            # Initiate deep rule analysis using formatter
             print("Démarrage de l'analyse de règles approfondie...")
-            params = {
-                'label_based_rules': 'true' if label_based_rules else 'false',
-                'offset': 0,
-                'limit': 100
-            }
+            params = RuleQueryFormatter.format_rule_analysis_request(
+                query_id=query_id,
+                label_based_rules=label_based_rules,
+                offset=0,
+                limit=100
+            )
             
             try:
                 # PUT request to start rule analysis
@@ -144,16 +152,24 @@ class DeepRuleAnalyzer(TrafficAnalysisBaseComponent):
             # Attendre un peu pour s'assurer que les résultats sont disponibles
             time.sleep(2)
             
-            # Retrieve final results
+            # Retrieve final results using formatter for parameters
             print("Récupération des résultats de l'analyse de règles...")
-            download_params = {'offset': 0, 'limit': 5000}
+            download_params = RuleQueryFormatter.format_rule_download_request(
+                query_id=query_id,
+                offset=0,
+                limit=5000
+            )
             
             try:
-                final_results = self.api._make_request(
+                raw_results = self.api._make_request(
                     'get', 
                     f'traffic_flows/async_queries/{query_id}/download',
                     params=download_params
                 )
+                
+                # Parse les résultats en utilisant le parseur
+                final_results = TrafficFlowParser.parse_flows(raw_results)
+                
                 print(f"✅ {len(final_results)} résultats récupérés avec analyse de règles.")
                 return final_results
             except Exception as e:

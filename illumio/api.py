@@ -3,12 +3,27 @@
 Module principal pour interagir avec l'API Illumio.
 Fournit des méthodes spécifiques pour chaque ressource Illumio.
 """
+from typing import Dict, List, Any, Optional, Union, Tuple
+
 from .api_core import IllumioAPICore
+
+# Importations des parseurs
+from .parsers.api_response_parser import ApiResponseParser
+from .parsers.traffic_flow_parser import TrafficFlowParser
+from .parsers.rule_parser import RuleParser
+from .parsers.workload_parser import WorkloadParser
+from .parsers.label_parser import LabelParser
+from .parsers.service_parser import ServiceParser
+from .parsers.ip_list_parser import IPListParser
+
+# Importations des formatters
+from .formatters.rule_query_formatter import RuleQueryFormatter
+from .formatters.traffic_query_formatter import TrafficQueryFormatter
 
 class IllumioAPI(IllumioAPICore):
     """Classe principale pour interagir avec l'API Illumio."""
     
-    def get_resource(self, resource_type, pversion=None, params=None):
+    def get_resource(self, resource_type: str, pversion: Optional[str] = None, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Méthode générique pour récupérer une ressource avec pagination.
         
@@ -34,21 +49,30 @@ class IllumioAPI(IllumioAPICore):
             endpoint = resource_type
         
         # Faire la requête asynchrone
-        return self._make_async_request('get', endpoint, params=params)
+        response = self._make_async_request('get', endpoint, params=params)
+        
+        # Parser la réponse avec le parseur approprié
+        return ApiResponseParser.parse_response(response)
     
-    def get_workloads(self, params=None):
+    def get_workloads(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Récupère la liste des workloads avec filtres optionnels."""
-        return self.get_resource('workloads', params=params)
+        workloads = self.get_resource('workloads', params=params)
+        # Parser les résultats pour les normaliser
+        return WorkloadParser.parse_workloads(workloads)
     
-    def get_workload(self, workload_id):
+    def get_workload(self, workload_id: str) -> Dict[str, Any]:
         """Récupère les détails d'un workload spécifique."""
-        return self._make_request('get', f'workloads/{workload_id}')
+        workload = self._make_request('get', f'workloads/{workload_id}')
+        # Parser le résultat
+        return WorkloadParser.parse_workload(workload)
     
-    def get_labels(self, params=None):
+    def get_labels(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Récupère la liste des labels."""
-        return self.get_resource('labels', params=params)
+        labels = self.get_resource('labels', params=params)
+        # Parser les résultats
+        return LabelParser.parse_labels(labels)
     
-    def get_ip_lists(self, pversion='draft', params=None):
+    def get_ip_lists(self, pversion: str = 'draft', params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Récupère la liste des IP lists.
         
@@ -56,9 +80,11 @@ class IllumioAPI(IllumioAPICore):
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
             params (dict): Paramètres additionnels pour la requête.
         """
-        return self.get_resource('ip_lists', pversion=pversion, params=params)
+        ip_lists = self.get_resource('ip_lists', pversion=pversion, params=params)
+        # Parser les résultats
+        return IPListParser.parse_ip_lists(ip_lists)
     
-    def get_services(self, pversion='draft', params=None):
+    def get_services(self, pversion: str = 'draft', params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Récupère la liste des services.
         
@@ -66,9 +92,11 @@ class IllumioAPI(IllumioAPICore):
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
             params (dict): Paramètres additionnels pour la requête.
         """
-        return self.get_resource('services', pversion=pversion, params=params)
+        services = self.get_resource('services', pversion=pversion, params=params)
+        # Parser les résultats
+        return ServiceParser.parse_services(services)
     
-    def get_label_groups(self, pversion='draft', params=None):
+    def get_label_groups(self, pversion: str = 'draft', params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Récupère la liste des groupes de labels.
         
@@ -76,22 +104,33 @@ class IllumioAPI(IllumioAPICore):
             pversion (str): Version de la politique ('draft' ou 'active'). Par défaut 'draft'.
             params (dict): Paramètres additionnels pour la requête.
         """
-        return self.get_resource('label_groups', pversion=pversion, params=params)
+        label_groups = self.get_resource('label_groups', pversion=pversion, params=params)
+        # Parser les résultats avec le parseur approprié (à créer si nécessaire)
+        return label_groups
     
-    def get_label_dimensions(self):
+    def get_label_dimensions(self) -> List[Dict[str, Any]]:
         """Récupère les dimensions de labels disponibles."""
-        return self._make_request('get', 'label_dimensions')
+        dimensions = self._make_request('get', 'label_dimensions')
+        # Parser les résultats
+        return LabelParser.parse_label_dimensions(dimensions)
     
-    def get_traffic_flows(self, params=None):
+    def get_traffic_flows(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Récupère les flux de trafic avec filtres optionnels."""
-        return self._make_request('get', 'traffic_flows', params=params)
+        flows = self._make_request('get', 'traffic_flows', params=params)
+        # Parser les résultats
+        return TrafficFlowParser.parse_flows(flows)
     
     # Méthodes d'API pour les opérations asynchrones d'analyse de trafic
     
-    def create_async_traffic_query(self, query_data):
+    def create_async_traffic_query(self, query_data: Dict[str, Any]) -> Dict[str, Any]:
         """Crée une requête asynchrone pour analyser les flux de trafic."""
-        # CORRECTION: Pas de doublon dans l'affichage
         try:
+            # Valider la requête en utilisant le formatter
+            valid, message = TrafficQueryFormatter.validate_query(query_data)
+            if not valid:
+                print(f"AVERTISSEMENT: Requête invalide: {message}")
+                # On continue quand même pour compatibilité
+            
             response = self._make_request('post', 'traffic_flows/async_queries', data=query_data)
             if 'href' not in response:
                 print(f"AVERTISSEMENT: La réponse de l'API ne contient pas d'attribut 'href'")
@@ -104,21 +143,26 @@ class IllumioAPI(IllumioAPICore):
             print(f"Début de la requête envoyée: {json.dumps(query_data)[:200]}...")
             raise
     
-    def get_async_traffic_query_status(self, query_id):
+    def get_async_traffic_query_status(self, query_id: str) -> Dict[str, Any]:
         """Récupère le statut d'une requête asynchrone de trafic."""
-        return self._make_request('get', f'traffic_flows/async_queries/{query_id}')
+        response = self._make_request('get', f'traffic_flows/async_queries/{query_id}')
+        # Parser la réponse avec le parseur API
+        return ApiResponseParser.parse_response(response)
     
-    def get_async_traffic_query_results(self, query_id):
+    def get_async_traffic_query_results(self, query_id: str) -> List[Dict[str, Any]]:
         """Récupère les résultats d'une requête asynchrone de trafic."""
         try:
-            return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
+            response = self._make_request('get', f'traffic_flows/async_queries/{query_id}/download')
+            # Les résultats seront parsés par l'appelant
+            return response
         except Exception as e:
             print(f"Erreur lors de la récupération des résultats (ID: {query_id}): {e}")
             # Essayer une autre approche si la première échoue
             print("Tentative alternative...")
-            return self._make_request('get', f'traffic_flows/async_queries/{query_id}/result')
+            response = self._make_request('get', f'traffic_flows/async_queries/{query_id}/result')
+            return response
     
-    def start_deep_rule_analysis(self, query_id, label_based_rules=False, offset=0, limit=100):
+    def start_deep_rule_analysis(self, query_id: str, label_based_rules: bool = False, offset: int = 0, limit: int = 100) -> bool:
         """
         Lance une analyse de règles approfondie sur une requête de trafic existante.
         
@@ -132,12 +176,13 @@ class IllumioAPI(IllumioAPICore):
             bool: True si la requête a été acceptée, False sinon
         """
         try:
-            # Préparer les paramètres
-            params = {
-                'label_based_rules': 'true' if label_based_rules else 'false', 
-                'offset': offset, 
-                'limit': limit
-            }
+            # Préparer les paramètres en utilisant le formatter
+            params = RuleQueryFormatter.format_rule_analysis_request(
+                query_id=query_id,
+                label_based_rules=label_based_rules,
+                offset=offset,
+                limit=limit
+            )
             
             # Faire la requête PUT pour lancer l'analyse de règles
             # Cette requête retourne un code 202 sans contenu, donc nous traitons cela comme un succès
@@ -154,7 +199,7 @@ class IllumioAPI(IllumioAPICore):
             print(f"Erreur lors du lancement de l'analyse de règles approfondie: {e}")
             return False
     
-    def get_deep_rule_analysis_results(self, query_id, offset=0, limit=5000):
+    def get_deep_rule_analysis_results(self, query_id: str, offset: int = 0, limit: int = 5000) -> List[Dict[str, Any]]:
         """
         Récupère les résultats d'une analyse de règles approfondie.
         
@@ -166,10 +211,18 @@ class IllumioAPI(IllumioAPICore):
         Returns:
             list: Liste des flux de trafic avec analyse de règles
         """
-        params = {'offset': offset, 'limit': limit}
-        return self._make_request('get', f'traffic_flows/async_queries/{query_id}/download', params=params)
+        # Utiliser le formatter pour les paramètres
+        params = RuleQueryFormatter.format_rule_download_request(
+            query_id=query_id,
+            offset=offset,
+            limit=limit
+        )
+        
+        response = self._make_request('get', f'traffic_flows/async_queries/{query_id}/download', params=params)
+        # Les résultats seront parsés par l'appelant
+        return response
     
-    def get_rule_sets(self, pversion='draft', params=None):
+    def get_rule_sets(self, pversion: str = 'draft', params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Récupère la liste des rule sets.
         
@@ -180,9 +233,11 @@ class IllumioAPI(IllumioAPICore):
         Returns:
             list: Liste des rule sets avec leurs règles
         """
-        return self.get_resource('rule_sets', pversion=pversion, params=params)
+        rule_sets = self.get_resource('rule_sets', pversion=pversion, params=params)
+        # Parser les résultats
+        return RuleParser.parse_rule_sets(rule_sets) if hasattr(RuleParser, 'parse_rule_sets') else rule_sets
 
-    def get_rule_set(self, rule_set_id, pversion='draft'):
+    def get_rule_set(self, rule_set_id: str, pversion: str = 'draft') -> Dict[str, Any]:
         """
         Récupère les détails d'un rule set spécifique.
         
@@ -193,9 +248,11 @@ class IllumioAPI(IllumioAPICore):
         Returns:
             dict: Détails du rule set et ses règles
         """
-        return self._make_request('get', f'sec_policy/{pversion}/rule_sets/{rule_set_id}')
+        rule_set = self._make_request('get', f'sec_policy/{pversion}/rule_sets/{rule_set_id}')
+        # Parser le résultat
+        return RuleParser.parse_rule_set(rule_set) if hasattr(RuleParser, 'parse_rule_set') else rule_set
 
-    def get_rule(self, rule_set_id, rule_id, pversion='draft'):
+    def get_rule(self, rule_set_id: str, rule_id: str, pversion: str = 'draft') -> Dict[str, Any]:
         """
         Récupère les détails d'une règle spécifique.
         
@@ -207,9 +264,11 @@ class IllumioAPI(IllumioAPICore):
         Returns:
             dict: Détails de la règle
         """
-        return self._make_request('get', f'sec_policy/{pversion}/rule_sets/{rule_set_id}/sec_rules/{rule_id}')
+        rule = self._make_request('get', f'sec_policy/{pversion}/rule_sets/{rule_set_id}/sec_rules/{rule_id}')
+        # Parser le résultat
+        return RuleParser.parse_rule(rule)
 
-    def get_rule_by_href(self, rule_href):
+    def get_rule_by_href(self, rule_href: str) -> Optional[Dict[str, Any]]:
         """
         Récupère les détails d'une règle à partir de son href complet.
         
@@ -217,9 +276,9 @@ class IllumioAPI(IllumioAPICore):
             rule_href (str): Href complet de la règle (par exemple /api/v2/orgs/1/sec_policy/active/rule_sets/123/sec_rules/456)
             
         Returns:
-            dict: Détails de la règle
+            dict: Détails de la règle ou None si non trouvée
         """
-        # Extraire les composants du href
+        # Extraire les composants du href en utilisant le parseur API
         components = rule_href.split('/')
         
         # Vérifier si le href a le bon format
@@ -236,7 +295,8 @@ class IllumioAPI(IllumioAPICore):
         
         # Appeler l'API pour récupérer la règle
         try:
-            return self.get_rule(rule_set_id, rule_id, pversion)
+            rule = self.get_rule(rule_set_id, rule_id, pversion)
+            return rule
         except Exception as e:
             print(f"Erreur lors de la récupération de la règle {rule_id}: {e}")
             return None

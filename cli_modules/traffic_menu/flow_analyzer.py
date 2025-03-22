@@ -13,6 +13,9 @@ from .common import (
     FlowDisplayFormatter
 )
 
+# Importation des formatters pour les requêtes
+from illumio.formatters.traffic_query_formatter import TrafficQueryFormatter
+
 def manual_entry_analysis():
     """Analyse de trafic par entrée manuelle de source, destination et service."""
     print_analysis_header("ANALYSE DE TRAFIC PAR ENTRÉE MANUELLE")
@@ -69,7 +72,7 @@ def manual_entry_analysis():
     deep_analysis = input("\nEffectuer une analyse de règles approfondie ? (o/N): ").lower()
     perform_deep_analysis = deep_analysis in ('o', 'oui', 'y', 'yes')
     
-    # Créer une requête d'analyse avec ces paramètres
+    # Créer une requête d'analyse avec ces paramètres et l'analyser
     analyze_specific_flow(source_ip, dest_ip, protocol, port, perform_deep_analysis)
 
 def analyze_specific_flow(source_ip, dest_ip, protocol, port=None, perform_deep_analysis=False):
@@ -97,47 +100,19 @@ def analyze_specific_flow(source_ip, dest_ip, protocol, port=None, perform_deep_
         print(f"  Port        : {port}")
     print(f"  Analyse des règles: {'Oui' if perform_deep_analysis else 'Non'}")
     
-    # Créer un nom de requête spécifique
-    query_name = f"Flow_{source_ip}_to_{dest_ip}_{protocol}"
-    if port:
-        query_name += f"_port{port}"
-    
-    # Créer une requête d'analyse personnalisée
-    query_data = {
-        "query_name": query_name,
-        "start_date": (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
-        "end_date": datetime.now().strftime('%Y-%m-%d'),
-        "sources_destinations_query_op": "and",
-        "sources": {
-            "include": [
-                [{"ip_address": source_ip}]  # Tableaux imbriqués comme requis par le schéma
-            ],
-            "exclude": []
-        },
-        "destinations": {
-            "include": [
-                [{"ip_address": dest_ip}]  # Tableaux imbriqués comme requis par le schéma
-            ],
-            "exclude": []
-        },
-        "services": {
-            "include": [
-                {
-                    "proto": protocol,
-                    "port": port
-                } if port else {"proto": protocol}
-            ],
-            "exclude": []
-        },
-        "policy_decisions": ["allowed", "potentially_blocked", "blocked"],
-        "max_results": 1000
-    }
+    # Créer une requête d'analyse personnalisée avec le formatter
+    query_data = TrafficQueryFormatter.format_specific_flow_query(
+        source_ip=source_ip,
+        dest_ip=dest_ip,
+        protocol=protocol,
+        port=port
+    )
     
     print("\nDémarrage de l'analyse de trafic spécifique...")
     
     # Préciser la période de recherche
-    start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = query_data.get('start_date')
+    end_date = query_data.get('end_date')
     print(f"Période d'analyse: {start_date} à {end_date} (7 derniers jours)")
     
     if perform_deep_analysis:
@@ -170,10 +145,7 @@ def analyze_specific_flow(source_ip, dest_ip, protocol, port=None, perform_deep_
                     policy_decisions[decision] = 1
                 
                 # Vérifier si une règle est associée
-                if 'rules' in flow and (
-                    (isinstance(flow['rules'], dict) and 'sec_policy' in flow['rules']) or
-                    (isinstance(flow['rules'], list) and len(flow['rules']) > 0)
-                ):
+                if flow.get('rule_href'):
                     has_rules += 1
             
             # Afficher le résumé

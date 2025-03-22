@@ -1,0 +1,200 @@
+#illumio/parsers/service_parser.py
+"""
+Parseur spécialisé pour les services Illumio.
+
+Ce module contient des méthodes pour transformer les données brutes des services
+provenant de l'API Illumio PCE en structures normalisées.
+"""
+import json
+from typing import Any, Dict, List, Optional, Union
+
+from .api_response_parser import ApiResponseParser
+
+
+class ServiceParser:
+    """Classe pour parser les services Illumio."""
+    
+    @staticmethod
+    def parse_service(service_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Parse un service individuel.
+        
+        Args:
+            service_data: Données brutes du service
+            
+        Returns:
+            Dictionnaire normalisé du service
+        """
+        # Si service_data est un objet ou contient des données JSON brutes
+        if not isinstance(service_data, dict):
+            if hasattr(service_data, '__dict__'):
+                service_data = service_data.__dict__
+            else:
+                return {
+                    'error': f"Type de service non supporté: {type(service_data)}",
+                    'raw_data': str(service_data)
+                }
+        
+        # Si le dictionnaire contient raw_data comme chaîne, l'extraire
+        raw_data = service_data.get('raw_data')
+        if isinstance(raw_data, str):
+            parsed_raw_data = ApiResponseParser.safe_json_loads(raw_data, {})
+            if parsed_raw_data:
+                # Fusion des données
+                source_data = {**parsed_raw_data, **service_data}
+            else:
+                source_data = service_data
+        else:
+            source_data = service_data
+        
+        # Extraction de l'ID du service
+        service_id = source_data.get('id')
+        if not service_id and 'href' in source_data:
+            service_id = ApiResponseParser.extract_id_from_href(source_data['href'])
+        
+        # Construction du service normalisé
+        normalized_service = {
+            'id': service_id,
+            'href': source_data.get('href'),
+            'name': source_data.get('name'),
+            'description': source_data.get('description'),
+            'created_at': source_data.get('created_at'),
+            'updated_at': source_data.get('updated_at'),
+            'service_ports': ServiceParser._parse_service_ports(source_data.get('service_ports', []))
+        }
+        
+        # Conserver les données brutes pour référence
+        if 'raw_data' not in normalized_service:
+            normalized_service['raw_data'] = json.dumps(source_data) if isinstance(source_data, dict) else str(source_data)
+        
+        return normalized_service
+    
+    @staticmethod
+    def parse_services(services_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Parse une liste de services.
+        
+        Args:
+            services_data: Liste des données brutes de services
+            
+        Returns:
+            Liste de dictionnaires normalisés
+        """
+        if not services_data:
+            return []
+            
+        normalized_services = []
+        for service in services_data:
+            try:
+                normalized_service = ServiceParser.parse_service(service)
+                normalized_services.append(normalized_service)
+            except Exception as e:
+                # Ajouter un service avec indication d'erreur
+                normalized_services.append({
+                    'error': f"Erreur de parsing: {str(e)}",
+                    'raw_data': json.dumps(service) if isinstance(service, dict) else str(service)
+                })
+        
+        return normalized_services
+    
+    @staticmethod
+    def _parse_service_ports(service_ports_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Parse les ports d'un service.
+        
+        Args:
+            service_ports_data: Données brutes des ports de service
+            
+        Returns:
+            Liste de ports de service normalisés
+        """
+        if not service_ports_data or not isinstance(service_ports_data, list):
+            return []
+        
+        normalized_ports = []
+        for port in service_ports_data:
+            if not isinstance(port, dict):
+                continue
+            
+            # Extraction du protocole et des ports
+            proto = port.get('proto')
+            from_port = port.get('port')
+            to_port = port.get('to_port', from_port)
+            
+            # Construction du port normalisé
+            normalized_port = {
+                'proto': proto,
+                'port': from_port,
+                'to_port': to_port,
+                'icmp_type': port.get('icmp_type'),
+                'icmp_code': port.get('icmp_code')
+            }
+            
+            normalized_ports.append(normalized_port)
+        
+        return normalized_ports
+    
+    @staticmethod
+    def find_matching_services(proto: int, port: Optional[int] = None, services_data: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Trouve les services correspondant à un protocole et un port.
+        
+        Args:
+            proto: Numéro de protocole
+            port: Numéro de port (optionnel)
+            services_data: Liste des services à rechercher (optionnel)
+            
+        Returns:
+            Liste des services correspondants
+        """
+        if not services_data:
+            return []
+            
+        matching_services = []
+        for service in services_data:
+            try:
+                # Si le service est déjà normalisé, l'utiliser directement
+                if 'service_ports' in service:
+                    service_ports = service['service_ports']
+                elif 'raw_data' in service:
+                    # Essayer d'extraire service_ports de raw_data
+                    raw_data = service['raw_data']
+                    if isinstance(raw_data, str):
+                        parsed_raw_data = ApiResponseParser.safe_json_loads(raw_data, {})
+                        service_ports = parsed_raw_data.get('service_ports', [])
+                    elif isinstance(raw_data, dict):
+                        service_ports = raw_data.get('service_ports', [])
+                    else:
+                        service_ports = []
+                else:
+                    service_ports = []
+                
+                # Vérifier si l'un des ports du service correspond
+                for service_port in service_ports:
+                    if not isinstance(service_port, dict):
+                        continue
+                        
+                    # Vérifier le protocole
+                    if service_port.get('proto') != proto:
+                        continue
+                    
+                    # Si le port est spécifié, vérifier qu'il est dans la plage
+                    if port is not None:
+                        from_port = service_port.get('port')
+                        to_port = service_port.get('to_port', from_port)
+                        
+                        if from_port is None or to_port is None:
+                            continue
+                            
+                        if not (from_port <= port <= to_port):
+                            continue
+                    
+                    # Le service correspond
+                    matching_services.append(service)
+                    break  # Ne pas ajouter le même service plusieurs fois
+            
+            except Exception as e:
+                # Ignorer ce service en cas d'erreur
+                continue
+        
+        return matching_services
