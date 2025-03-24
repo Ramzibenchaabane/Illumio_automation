@@ -66,8 +66,9 @@ def export_traffic_analysis():
         print("\nFormats d'export disponibles:")
         print("1. CSV")
         print("2. JSON")
+        print("3. Excel (avec feuille de détails des règles)")
         
-        format_choice = get_user_choice(2)
+        format_choice = get_user_choice(3)
         
         if format_choice == 0:
             return
@@ -82,18 +83,27 @@ def export_traffic_analysis():
         if not filename:
             filename = default_filename
         
-        # Exporter selon le format choisi
-        format_type = 'csv' if format_choice == 1 else 'json'
-        
-        # S'assurer que le nom du fichier a l'extension correcte
-        if not filename.endswith(f'.{format_type}'):
-            filename += f'.{format_type}'
+        # Déterminer le format d'export
+        format_type = None
+        if format_choice == 1:
+            format_type = 'csv'
+            if not filename.endswith('.csv'):
+                filename += '.csv'
+        elif format_choice == 2:
+            format_type = 'json'
+            if not filename.endswith('.json'):
+                filename += '.json'
+        else:  # format_choice == 3
+            format_type = 'excel'
+            if not filename.endswith('.xlsx'):
+                filename += '.xlsx'
         
         # Construire le chemin complet du fichier de sortie
         output_path = get_file_path(filename, 'output')
         
         try:
-            success = analyzer.export_flows(query_id, format_type=format_type, output_file=output_path)
+            # Utiliser la méthode export_query_results qui a été mise à jour pour inclure les règles
+            success = analyzer.export_handler.export_query_results(query_id, format_type=format_type, output_file=output_path)
             
             if success:
                 print(f"\n✅ Exportation réussie vers {output_path}")
@@ -130,7 +140,7 @@ def export_flows_manually(flows, output_file, format_type):
     Args:
         flows (list): Liste des flux à exporter
         output_file (str): Chemin du fichier de sortie
-        format_type (str): Format d'export ('csv' ou 'json')
+        format_type (str): Format d'export ('csv', 'json' ou 'excel')
         
     Returns:
         bool: True si l'export a réussi, False sinon
@@ -252,6 +262,133 @@ def export_flows_manually(flows, output_file, format_type):
                     writer.writerow(csv_row)
             
             return True
+        
+        elif format_type.lower() == 'excel':
+            try:
+                import pandas as pd
+                from illumio.parsers.rule_parser import RuleParser
+                
+                # Créer un DataFrame pour les flux
+                flow_rows = []
+                for flow in flows:
+                    if not isinstance(flow, dict):
+                        if hasattr(flow, '__dict__'):
+                            flow = flow.__dict__
+                        else:
+                            continue
+                    
+                    # Extraire les mêmes données que pour le CSV
+                    src_ip = None
+                    dst_ip = None
+                    service_name = None
+                    service_port = None
+                    service_protocol = None
+                    
+                    if 'src' in flow and isinstance(flow['src'], dict):
+                        src_ip = flow['src'].get('ip')
+                    elif 'src_ip' in flow:
+                        src_ip = flow.get('src_ip')
+                    
+                    if 'dst' in flow and isinstance(flow['dst'], dict):
+                        dst_ip = flow['dst'].get('ip')
+                    elif 'dst_ip' in flow:
+                        dst_ip = flow.get('dst_ip')
+                    
+                    if 'service' in flow:
+                        if isinstance(flow['service'], dict):
+                            service_name = flow['service'].get('name')
+                            service_port = flow['service'].get('port')
+                            service_protocol = flow['service'].get('proto')
+                        else:
+                            service_name = flow.get('service')
+                    
+                    if 'service_name' in flow:
+                        service_name = flow.get('service_name')
+                    if 'service_port' in flow:
+                        service_port = flow.get('service_port')
+                    if 'service_protocol' in flow:
+                        service_protocol = flow.get('service_protocol')
+                    
+                    # Extraire les informations de règles si disponibles
+                    rule_href = None
+                    rule_name = None
+                    
+                    if 'rule_href' in flow:
+                        rule_href = flow.get('rule_href')
+                        rule_name = flow.get('rule_name')
+                    elif 'rules' in flow:
+                        rules = flow['rules']
+                        if isinstance(rules, dict) and 'sec_policy' in rules:
+                            sec_policy = rules.get('sec_policy', {})
+                            if isinstance(sec_policy, dict):
+                                rule_href = sec_policy.get('href')
+                                rule_name = sec_policy.get('name')
+                        elif isinstance(rules, list) and len(rules) > 0:
+                            rule = rules[0]
+                            if isinstance(rule, dict):
+                                rule_href = rule.get('href')
+                                rule_name = rule.get('name', rule_href.split('/')[-1] if rule_href else None)
+                    
+                    # Créer une ligne Excel
+                    flow_row = {
+                        'Source IP': src_ip,
+                        'Destination IP': dst_ip,
+                        'Service': service_name,
+                        'Port': service_port,
+                        'Protocol': service_protocol,
+                        'Decision': flow.get('policy_decision'),
+                        'Direction': flow.get('flow_direction'),
+                        'Connections': flow.get('num_connections'),
+                        'Regle': rule_name,
+                        'HREF Regle': rule_href
+                    }
+                    
+                    flow_rows.append(flow_row)
+                
+                # Créer un DataFrame pour les flux
+                flows_df = pd.DataFrame(flow_rows)
+                
+                # Écrire les flux dans la première feuille
+                with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+                    flows_df.to_excel(writer, sheet_name='Flux de trafic', index=False)
+                    
+                    # Tenter d'extraire les informations de règles pour la deuxième feuille
+                    try:
+                        # Extraire tous les hrefs uniques des règles
+                        rule_hrefs = set()
+                        for flow in flows:
+                            if isinstance(flow, dict):
+                                if 'rule_href' in flow and flow['rule_href']:
+                                    rule_hrefs.add(flow['rule_href'])
+                                elif 'rules' in flow:
+                                    rules = flow['rules']
+                                    if isinstance(rules, dict) and 'sec_policy' in rules:
+                                        sec_policy = rules.get('sec_policy', {})
+                                        if isinstance(sec_policy, dict) and 'href' in sec_policy:
+                                            rule_hrefs.add(sec_policy['href'])
+                                    elif isinstance(rules, list) and len(rules) > 0:
+                                        rule = rules[0]
+                                        if isinstance(rule, dict) and 'href' in rule:
+                                            rule_hrefs.add(rule['href'])
+                        
+                        if rule_hrefs:
+                            # Simplification : créer une feuille basique avec les hrefs des règles
+                            rule_rows = [{'HREF': href, 'Rule ID': href.split('/')[-1]} for href in rule_hrefs]
+                            rules_df = pd.DataFrame(rule_rows)
+                            rules_df.to_excel(writer, sheet_name='Règles', index=False)
+                    except Exception as e:
+                        print(f"Avertissement: Impossible de créer la feuille de règles détaillées: {e}")
+                
+                return True
+            except ImportError:
+                print("❌ Modules pandas ou openpyxl non disponibles pour l'export Excel.")
+                print("   Installez-les avec: pip install pandas openpyxl")
+                return False
+            except Exception as e:
+                print(f"❌ Erreur lors de l'export Excel manuel: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
         
         else:
             print(f"Format non supporté: {format_type}")

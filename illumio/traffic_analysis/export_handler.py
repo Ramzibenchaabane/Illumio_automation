@@ -43,7 +43,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             bool: True if export successful, False otherwise
         """
         # Ensure filename has correct extension
-        if not filename.endswith(('.json', '.csv')):
+        if not filename.endswith(('.json', '.csv', '.xlsx')):
             filename += '.json' if format_type.lower() == 'json' else '.csv'
         
         # If the filename is not an absolute path, put it in the outputs directory
@@ -58,6 +58,12 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 return self._export_to_json(processed_flows, filename)
             elif format_type.lower() == 'csv':
                 return self._export_to_csv(processed_flows, filename)
+            elif format_type.lower() == 'excel' or filename.endswith('.xlsx'):
+                # Extract rule hrefs to get detailed rules information
+                rule_hrefs = self.extract_rule_hrefs(processed_flows)
+                rule_details = self.get_rule_details(rule_hrefs)
+                
+                return self._export_to_excel(processed_flows, filename, rule_details)
             else:
                 print(f"Format non supporté: {format_type}")
                 return False
@@ -123,6 +129,82 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         except Exception as e:
             print(f"Erreur lors de l'export CSV: {e}")
             return False
+            
+    def _export_to_excel(self, flows: List[Dict[str, Any]], filename: str, rule_details: List[Dict[str, Any]]) -> bool:
+        """
+        Export flows to Excel format with rules details in a second sheet.
+        
+        Args:
+            flows (list): Processed traffic flows
+            filename (str): Output Excel filename
+            rule_details (list): List of detailed rule information
+            
+        Returns:
+            bool: True if export successful
+        """
+        try:
+            # Ensure the filename has the .xlsx extension
+            if not filename.endswith('.xlsx'):
+                filename = filename.replace('.csv', '.xlsx')
+                if not filename.endswith('.xlsx'):
+                    filename += '.xlsx'
+            
+            # Create a DataFrame for the flows
+            flow_rows = []
+            for flow in flows:
+                flow_row = {
+                    'Source IP': flow.get('src_ip'),
+                    'Source Workload': flow.get('src_workload_id'),
+                    'Destination IP': flow.get('dst_ip'),
+                    'Destination Workload': flow.get('dst_workload_id'),
+                    'Service': flow.get('service_name'),
+                    'Port': flow.get('service_port'),
+                    'Protocol': flow.get('service_protocol'),
+                    'Policy Decision': flow.get('policy_decision'),
+                    'Flow Direction': flow.get('flow_direction'),
+                    'Connections': flow.get('num_connections'),
+                    'First Detected': flow.get('first_detected'),
+                    'Last Detected': flow.get('last_detected'),
+                    'Rule HREF': flow.get('rule_href'),
+                    'Rule Name': flow.get('rule_name')
+                }
+                
+                # Add any Excel metadata if present
+                if 'excel_metadata' in flow:
+                    meta = flow['excel_metadata']
+                    flow_row.update({
+                        'Source Excel IP': meta.get('source_ip'),
+                        'Destination Excel IP': meta.get('dest_ip'),
+                        'Excel Protocol': meta.get('protocol'),
+                        'Excel Port': meta.get('port'),
+                        'Excel Row': meta.get('excel_row')
+                    })
+                
+                flow_rows.append(flow_row)
+            
+            flows_df = pd.DataFrame(flow_rows)
+            
+            # Create a writer for the Excel file
+            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                # Write the flows to the first sheet
+                flows_df.to_excel(writer, sheet_name='Flux de trafic', index=False)
+                
+                # Create the rules sheet if we have rule details
+                if rule_details:
+                    self.export_rules_to_excel_sheet(writer, rule_details)
+            
+            print(f"✅ Export Excel terminé. Fichier sauvegardé: {filename}")
+            return True
+            
+        except ImportError:
+            print("❌ Erreur: Modules pandas ou openpyxl non disponibles.")
+            print("   Installez-les avec: pip install pandas openpyxl")
+            return False
+        except Exception as e:
+            print(f"❌ Erreur lors de l'export Excel: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def _format_flow_for_csv(self, flow: Dict[str, Any], fieldnames: List[str]) -> Dict[str, Any]:
         """
@@ -169,8 +251,18 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             output_dir = get_output_dir()
             output_file = os.path.join(output_dir, f"traffic_analysis_{query_id}_{datetime.now().strftime('%Y%m%d')}")
         
+        # Extract rule hrefs for enhanced detail if exporting to Excel
+        rule_hrefs = []
+        rule_details = []
+        if format_type.lower() == 'excel' or output_file.endswith('.xlsx'):
+            rule_hrefs = self.extract_rule_hrefs(processed_flows)
+            rule_details = self.get_rule_details(rule_hrefs)
+        
         # Perform export
-        return self.export_flows(processed_flows, output_file, format_type)
+        if format_type.lower() == 'excel' or output_file.endswith('.xlsx'):
+            return self._export_to_excel(processed_flows, output_file, rule_details)
+        else:
+            return self.export_flows(processed_flows, output_file, format_type)
     
     def extract_rule_hrefs(self, flows: List[Dict[str, Any]]) -> List[str]:
         """
@@ -236,24 +328,18 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         
         return rules
     
-    def export_rules_to_excel(self, output_file: str, rules: List[Dict[str, Any]]) -> bool:
+    def export_rules_to_excel_sheet(self, writer: pd.ExcelWriter, rules: List[Dict[str, Any]]) -> bool:
         """
         Exporte les règles dans une feuille Excel.
         
         Args:
-            output_file (str): Nom du fichier Excel (doit se terminer par .xlsx)
+            writer (ExcelWriter): Writer pandas pour Excel
             rules (list): Liste des règles à exporter
             
         Returns:
             bool: True si l'export a réussi, False sinon
         """
         try:
-            # Vérifier que le fichier est un .xlsx
-            if not output_file.endswith('.xlsx'):
-                output_file = output_file.replace('.csv', '.xlsx')
-                if not output_file.endswith('.xlsx'):
-                    output_file += '.xlsx'
-            
             # Convertir les règles en format adapté pour Excel en utilisant les parseurs
             rule_rows = []
             for rule in rules:
@@ -318,34 +404,12 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             available_columns = [col for col in columns_order if col in rules_df.columns]
             rules_df = rules_df[available_columns]
             
-            try:
-                # Essayer de charger le fichier Excel existant
-                book = load_workbook(output_file)
-                
-                # Vérifier si la feuille 'Règles' existe déjà
-                if 'Règles' in book.sheetnames:
-                    # Supprimer la feuille existante
-                    std = book.get_sheet_by_name('Règles')
-                    book.remove(std)
-                
-                # Enregistrer et fermer le classeur
-                book.save(output_file)
-                
-                # Écrire le DataFrame dans une nouvelle feuille
-                with pd.ExcelWriter(output_file, engine='openpyxl', mode='a') as writer:
-                    rules_df.to_excel(writer, sheet_name='Règles', index=False)
+            # Écrire le DataFrame dans une nouvelle feuille
+            rules_df.to_excel(writer, sheet_name='Règles', index=False)
             
-            except FileNotFoundError:
-                # Le fichier n'existe pas, créer un nouveau fichier Excel
-                rules_df.to_excel(output_file, sheet_name='Règles', index=False)
-            
-            print(f"✅ {len(rule_rows)} règles exportées dans la feuille 'Règles' du fichier {output_file}")
+            print(f"✅ {len(rule_rows)} règles exportées dans la feuille 'Règles'")
             return True
             
-        except ImportError:
-            print("❌ Erreur: Modules pandas ou openpyxl non disponibles.")
-            print("   Installez-les avec: pip install pandas openpyxl")
-            return False
         except Exception as e:
             print(f"❌ Erreur lors de l'export des règles: {e}")
             import traceback

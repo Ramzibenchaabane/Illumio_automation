@@ -245,7 +245,7 @@ def analyze_excel_flows(file_path: str, perform_deep_analysis: bool = False) -> 
         if all_results:
             # Créer un nom de fichier pour l'export
             base_filename = f"excel_analysis_{timestamp}"
-            export_excel_results(all_results, base_filename)
+            export_excel_results(all_results, base_filename, analyzer)
             
             # Afficher un aperçu des résultats
             print("\nAperçu des résultats:")
@@ -261,13 +261,14 @@ def analyze_excel_flows(file_path: str, perform_deep_analysis: bool = False) -> 
         import traceback
         print(traceback.format_exc())
 
-def export_excel_results(results: List[Dict[str, Any]], base_filename: str) -> None:
+def export_excel_results(results: List[Dict[str, Any]], base_filename: str, analyzer: Any) -> None:
     """
-    Exporte les résultats d'analyse Excel au format CSV et JSON.
+    Exporte les résultats d'analyse Excel au format CSV, JSON et Excel (avec feuille de règles).
     
     Args:
         results: Liste des résultats d'analyse
         base_filename: Nom de base pour les fichiers d'export
+        analyzer: Instance d'IllumioTrafficAnalyzer pour utiliser son export_handler
     """
     try:
         # Obtenir le répertoire de sortie
@@ -276,49 +277,12 @@ def export_excel_results(results: List[Dict[str, Any]], base_filename: str) -> N
         # Créer les chemins complets pour les fichiers d'export
         csv_file = os.path.join(output_dir, f"{base_filename}.csv")
         json_file = os.path.join(output_dir, f"{base_filename}.json")
+        excel_file = os.path.join(output_dir, f"{base_filename}.xlsx")
         
         # Exporter en CSV
         try:
             print(f"\nExport des résultats au format CSV: {csv_file}")
-            
-            # Définir les en-têtes CSV
-            fieldnames = [
-                'src_ip', 'dst_ip', 'service_name', 'service_port', 'service_protocol',
-                'policy_decision', 'flow_direction', 'num_connections',
-                'rule_href', 'rule_name', 'source_excel_ip', 'dest_excel_ip', 
-                'protocol_excel', 'port_excel', 'excel_row'
-            ]
-            
-            import csv
-            with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                
-                for result in results:
-                    # Extraire les données Excel des métadonnées
-                    excel_meta = result.get('excel_metadata', {})
-                    
-                    # Préparer la ligne CSV
-                    row = {
-                        'src_ip': result.get('src_ip'),
-                        'dst_ip': result.get('dst_ip'),
-                        'service_name': result.get('service_name'),
-                        'service_port': result.get('service_port'),
-                        'service_protocol': result.get('service_protocol'),
-                        'policy_decision': result.get('policy_decision'),
-                        'flow_direction': result.get('flow_direction'),
-                        'num_connections': result.get('num_connections'),
-                        'rule_href': result.get('rule_href'),
-                        'rule_name': result.get('rule_name'),
-                        'source_excel_ip': excel_meta.get('source_ip'),
-                        'dest_excel_ip': excel_meta.get('dest_ip'),
-                        'protocol_excel': excel_meta.get('protocol'),
-                        'port_excel': excel_meta.get('port'),
-                        'excel_row': excel_meta.get('excel_row')
-                    }
-                    
-                    writer.writerow(row)
-            
+            analyzer.export_handler.export_flows(results, csv_file, format_type='csv')
             print(f"✅ Export CSV terminé.")
         except Exception as e:
             print(f"❌ Erreur lors de l'export CSV: {e}")
@@ -326,63 +290,32 @@ def export_excel_results(results: List[Dict[str, Any]], base_filename: str) -> N
         # Exporter en JSON
         try:
             print(f"Export des résultats au format JSON: {json_file}")
-            
-            # Préparer les données pour JSON en les rendant sérialisables
-            def prepare_for_json(obj):
-                if isinstance(obj, dict):
-                    return {k: prepare_for_json(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [prepare_for_json(i) for i in obj]
-                elif isinstance(obj, (int, float, str, bool, type(None))):
-                    return obj
-                else:
-                    # Si ce n'est pas un type JSON natif, le convertir en chaîne
-                    return str(obj)
-            
-            json_results = prepare_for_json(results)
-            
-            with open(json_file, 'w', encoding='utf-8') as f:
-                json.dump(json_results, f, indent=2, ensure_ascii=False)
-            
+            analyzer.export_handler.export_flows(results, json_file, format_type='json')
             print(f"✅ Export JSON terminé.")
         except Exception as e:
             print(f"❌ Erreur lors de l'export JSON: {e}")
         
-        # Si pandas et openpyxl sont disponibles, exporter aussi en Excel
+        # Exporter en Excel avec feuille de règles
         try:
-            excel_file = os.path.join(output_dir, f"{base_filename}.xlsx")
-            print(f"Export des résultats au format Excel: {excel_file}")
+            print(f"Export des résultats au format Excel avec détails des règles: {excel_file}")
             
-            # Créer un DataFrame à partir des résultats
-            processed_results = []
-            for result in results:
-                excel_meta = result.get('excel_metadata', {})
+            # Extraire les hrefs des règles
+            rule_hrefs = analyzer.export_handler.extract_rule_hrefs(results)
+            # Récupérer les détails des règles
+            rule_details = analyzer.export_handler.get_rule_details(rule_hrefs)
+            
+            # Utiliser la méthode d'export Excel avec les détails de règles
+            success = analyzer.export_handler._export_to_excel(results, excel_file, rule_details)
+            
+            if success:
+                print(f"✅ Export Excel terminé.")
+            else:
+                print(f"❌ Erreur lors de l'export Excel.")
                 
-                processed_results.append({
-                    'Flux source': f"{excel_meta.get('source_ip')} → {excel_meta.get('dest_ip')}",
-                    'Protocole Excel': excel_meta.get('protocol'),
-                    'Port Excel': excel_meta.get('port'),
-                    'Ligne Excel': excel_meta.get('excel_row'),
-                    'Source IP': result.get('src_ip'),
-                    'Destination IP': result.get('dst_ip'),
-                    'Service': result.get('service_name'),
-                    'Port': result.get('service_port'),
-                    'Protocole': result.get('service_protocol'),
-                    'Décision': result.get('policy_decision'),
-                    'Direction': result.get('flow_direction'),
-                    'Connexions': result.get('num_connections'),
-                    'Règle': result.get('rule_name'),
-                    'HREF Règle': result.get('rule_href')
-                })
-            
-            df = pd.DataFrame(processed_results)
-            df.to_excel(excel_file, index=False, engine='openpyxl')
-            
-            print(f"✅ Export Excel terminé.")
-        except ImportError:
-            print("⚠️ Export Excel non disponible. Installez pandas et openpyxl pour cette fonctionnalité.")
         except Exception as e:
             print(f"❌ Erreur lors de l'export Excel: {e}")
+            import traceback
+            traceback.print_exc()
         
         print(f"\nTous les exports ont été enregistrés dans le dossier: {output_dir}")
     except Exception as e:
