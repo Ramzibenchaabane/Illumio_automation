@@ -83,12 +83,16 @@ class RuleParser:
         # Si le dictionnaire contient raw_data comme chaîne, l'extraire
         raw_data = rule_data.get('raw_data')
         if isinstance(raw_data, str):
-            parsed_raw_data = ApiResponseParser.safe_json_loads(raw_data, {})
-            if parsed_raw_data:
-                # Extraire les données de raw_data
-                raw_data = parsed_raw_data
+            try:
+                parsed_raw_data = json.loads(raw_data)
+                if parsed_raw_data:
+                    # Extraire les données de raw_data
+                    raw_data = parsed_raw_data
+            except json.JSONDecodeError:
+                # En cas d'erreur de parsing, conserver raw_data tel quel
+                pass
         elif isinstance(raw_data, dict):
-            # raw_data est déjà un dictionnaire
+            # raw_data est déjà un dictionnaire, pas besoin de le parser
             pass
         else:
             # Utiliser rule_data directement si raw_data n'est pas utilisable
@@ -138,7 +142,7 @@ class RuleParser:
         
         # Conserver les données brutes pour référence
         if 'raw_data' not in normalized_rule:
-            normalized_rule['raw_data'] = json.dumps(raw_data) if isinstance(raw_data, dict) else str(raw_data)
+            normalized_rule['raw_data'] = raw_data
         
         return normalized_rule
     
@@ -197,12 +201,12 @@ class RuleParser:
                     value = label.get('value')
                     href = label.get('href')
                     
-                    if key:  # S'assurer que key existe avant de créer un élément
+                    if key is not None and value is not None:  # Vérification explicite pour éviter les valeurs vides
                         scope_labels.append({
                             'type': 'label',
                             'key': key,
-                            'value': value,  # S'assurer que cette valeur est préservée
-                            'display': f"{key}:{value}" if value else key,
+                            'value': value,
+                            'display': f"{key}:{value}",
                             'href': href,
                             'exclusion': scope_item.get('exclusion', False)
                         })
@@ -254,7 +258,7 @@ class RuleParser:
                 label = actor['label']
                 key = label.get('key')
                 value = label.get('value')
-                if key and value:
+                if key is not None and value is not None:  # Vérification explicite pour éviter les valeurs vides
                     actor_value = f"{key}:{value}"
                     # Stocker les informations du label dans actor_raw
                     actor_raw = {
@@ -263,7 +267,8 @@ class RuleParser:
                         'href': label.get('href')
                     }
                 else:
-                    actor_value = key or "unknown_label"
+                    # Si key ou value est absent/vide, on utilise ce qui est disponible
+                    actor_value = key or value or "unknown_label"
             elif 'label_group' in actor and isinstance(actor['label_group'], dict):
                 actor_type = 'label_group'
                 lg = actor['label_group']

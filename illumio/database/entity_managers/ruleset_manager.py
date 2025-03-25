@@ -90,6 +90,10 @@ class RuleSetManager:
                     # Convertir le rule set en format DB
                     db_rule_set = RuleConverter.to_db_rule_set(rule_set_data)
                     
+                    # S'assurer que raw_data contient toutes les informations, y compris les scopes
+                    if isinstance(rule_set_data, dict) and 'raw_data' not in db_rule_set:
+                        db_rule_set['raw_data'] = json.dumps(rule_set_data)
+                    
                     # Ajouter la version de politique
                     db_rule_set['pversion'] = pversion
                     
@@ -107,6 +111,10 @@ class RuleSetManager:
                     
                     # Stocker chaque règle
                     for rule_data in rules:
+                        # S'assurer que raw_data contient toutes les informations
+                        if 'raw_data' not in rule_data and isinstance(rule_data, dict):
+                            rule_data['raw_data'] = json.dumps(rule_data)
+                            
                         # Convertir la règle en format DB
                         db_rule = RuleConverter.to_db_dict(rule_data, rule_set_id)
                         

@@ -65,11 +65,12 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             if format_type.lower() == 'json':
                 return self._export_to_json(processed_flows, filename)
             elif format_type.lower() in ('excel', 'xlsx'):
-                # Extract rule hrefs to get detailed rules information
+                # Extract rule hrefs
                 rule_hrefs = self.extract_rule_hrefs(processed_flows)
-                # Get detailed rule information with all associated objects
+                # Get detailed rule information
                 rule_details = self.get_detailed_rules(rule_hrefs)
                 
+                # Export to Excel with both sheets
                 return self._export_to_excel(processed_flows, filename, rule_details)
             else:
                 print(f"Format non supporté: {format_type}")
@@ -278,10 +279,12 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         for scope_group in scopes:
             label_descriptions = []
             for label in scope_group:
-                key = label.get('key', '')
-                value = label.get('value', '')  # S'assurer de récupérer la valeur correctement
+                # Extraction directe des valeurs clé/valeur du label
+                key = label.get('key')
+                value = label.get('value')
                 
-                if key:  # On vérifie key seulement pour permettre des valeurs vides
+                if key is not None and value is not None:
+                    # Vérifier si c'est une exclusion
                     if label.get('exclusion'):
                         label_descriptions.append(f"NON {key}:{value}")
                     else:
@@ -589,109 +592,81 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             print(f"Erreur lors de la récupération du service {service_id}: {e}")
             return None
     
-    def _enrich_actors(self, actors: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def extract_rule_hrefs(self, flows: List[Dict[str, Any]]) -> List[str]:
         """
-        Enrichit les acteurs (providers ou consumers) avec les noms d'objets.
+        Extrait tous les hrefs uniques des règles à partir des flux de trafic.
         
         Args:
-            actors (list): Liste des acteurs
+            flows (list): Liste des flux de trafic
             
         Returns:
-            list: Liste des acteurs enrichis
+            list: Liste des hrefs uniques des règles
         """
-        enriched_actors = []
-        
-        for actor in actors:
-            actor_type = actor.get('type')
-            
-            if actor_type == 'label':
-                # D'abord, vérifier si les informations sont déjà disponibles dans les données de l'acteur
-                # Cela arrive quand le parseur a extrait ces informations de raw_data
-                raw_data = actor.get('raw_data', {})
-                if isinstance(raw_data, dict) and 'label' in raw_data:
-                    label_data = raw_data['label']
-                    if isinstance(label_data, dict):
-                        key = label_data.get('key')
-                        value = label_data.get('value')
-                        if key and value:
-                            actor['key'] = key
-                            actor['value'] = value
-                            actor['display'] = f"{key}:{value}"
-                
-                # Si nous n'avons pas les détails complets, essayer de les récupérer depuis la base de données
-                if 'key' not in actor and ':' in actor.get('value', ''):
-                    key, value = actor['value'].split(':', 1)
-                    actor['key'] = key
-                    actor['value'] = value
-                    
-                    # Enrichir avec les détails du label depuis la base de données
-                    if hasattr(self.db, 'connect'):
-                        try:
-                            # Get label details from database
-                            conn, cursor = self.db.connect()
-                            cursor.execute('''
-                            SELECT * FROM labels WHERE key = ? AND value = ?
-                            ''', (key, value))
-                            row = cursor.fetchone()
-                            self.db.close(conn)
-                            
-                            if row:
-                                actor['label_details'] = dict(row)
-                        except Exception as e:
-                            print(f"Erreur lors de la récupération des détails du label: {e}")
-            
-            elif actor_type == 'label_group':
-                # Utiliser le nom s'il est déjà présent (depuis raw_data)
-                if 'name' not in actor:
-                    # Sinon, essayer de récupérer le nom depuis la base de données
-                    label_group_name = self._get_label_group_name(actor.get('value', ''))
-                    if label_group_name != actor.get('value', ''):
-                        actor['name'] = label_group_name
-            
-            elif actor_type == 'workload':
-                # Utiliser le hostname s'il est déjà présent (depuis raw_data)
-                if 'hostname' not in actor:
-                    # Sinon, essayer de récupérer le hostname depuis la base de données
-                    workload_hostname = self._get_workload_hostname_from_value(actor.get('value', ''))
-                    if workload_hostname != actor.get('value', ''):
-                        actor['hostname'] = workload_hostname
-            
-            elif actor_type == 'ip_list':
-                # Utiliser le nom s'il est déjà présent (depuis raw_data)
-                if 'name' not in actor:
-                    # Sinon, essayer de récupérer le nom depuis la base de données
-                    ip_list_name = self._get_ip_list_name(actor.get('value', ''))
-                    if ip_list_name != actor.get('value', ''):
-                        actor['name'] = ip_list_name
-            
-            enriched_actors.append(actor)
-        
-        return enriched_actors
+        # Utiliser le parseur de règles pour extraire les hrefs
+        return RuleParser.extract_rule_hrefs(flows)
     
-    def _enrich_services(self, services: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def get_detailed_rules(self, rule_hrefs: List[str]) -> List[Dict[str, Any]]:
         """
-        Enrichit les services avec plus de détails.
+        Récupère les détails complets des règles à partir de leurs hrefs depuis la base de données locale.
+        Cette version mise à jour se fie uniquement à la base de données locale, sans faire de requêtes API.
         
         Args:
-            services (list): Liste des services
+            rule_hrefs (list): Liste des hrefs des règles
             
         Returns:
-            list: Liste des services enrichis
+            list: Liste des règles avec détails complets
         """
-        enriched_services = []
+        if not rule_hrefs:
+            return []
         
-        for service in services:
-            service_type = service.get('type')
-            
-            if service_type == 'service':
-                # Enrichir avec les détails du service
-                service_name = self._get_service_name(service.get('id', ''))
-                if service_name:
-                    service['name'] = service_name
-            
-            enriched_services.append(service)
+        # Ne récupérer les règles que depuis la base de données locale
+        detailed_rules = []
         
-        return enriched_services
+        try:
+            # Récupérer toutes les règles par leurs hrefs en une seule opération
+            if hasattr(self.db, 'get_rules_by_hrefs'):
+                rules = self.db.get_rules_by_hrefs(rule_hrefs)
+                
+                # Transformation finale des règles pour l'affichage
+                for rule in rules:
+                    try:
+                        # Utiliser le parseur pour normaliser la structure de la règle
+                        if 'raw_data' in rule and rule['raw_data']:
+                            # Convertir raw_data en objet si c'est une chaîne JSON
+                            if isinstance(rule['raw_data'], str):
+                                try:
+                                    raw_data = json.loads(rule['raw_data'])
+                                    
+                                    # Utiliser le parseur pour analyser et normaliser la règle
+                                    normalized_rule = RuleParser.parse_rule(raw_data)
+                                    
+                                    # Si le parsing a réussi, ajouter la règle normalisée
+                                    if normalized_rule:
+                                        detailed_rules.append(normalized_rule)
+                                    else:
+                                        print(f"Warning: Unable to normalize rule {rule.get('id', 'unknown')}")
+                                except json.JSONDecodeError as e:
+                                    print(f"Error parsing rule raw_data JSON: {e}")
+                            else:
+                                # Si raw_data est déjà un objet, l'utiliser directement
+                                normalized_rule = RuleParser.parse_rule(rule)
+                                if normalized_rule:
+                                    detailed_rules.append(normalized_rule)
+                        else:
+                            # Si pas de raw_data, utiliser la règle directement
+                            normalized_rule = RuleParser.parse_rule(rule)
+                            if normalized_rule:
+                                detailed_rules.append(normalized_rule)
+                    except Exception as e:
+                        print(f"Error processing rule {rule.get('id', 'unknown')}: {e}")
+            else:
+                print("Warning: Database doesn't support get_rules_by_hrefs method")
+        except Exception as e:
+            import traceback
+            print(f"Error retrieving rules from database: {e}")
+            traceback.print_exc()
+            
+        return detailed_rules
     
     def export_query_results(self, 
                              query_id: str, 
@@ -727,7 +702,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         if format_type.lower() in ('excel', 'xlsx') or output_file.endswith('.xlsx'):
             # Extract rule hrefs
             rule_hrefs = self.extract_rule_hrefs(processed_flows)
-            # Get detailed rule information
+            # Get detailed rule information from the database
             rule_details = self.get_detailed_rules(rule_hrefs)
             
             # Export to Excel with both sheets
@@ -735,125 +710,3 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         else:
             # Export to other formats
             return self.export_flows(processed_flows, output_file, format_type)
-    
-    def extract_rule_hrefs(self, flows: List[Dict[str, Any]]) -> List[str]:
-        """
-        Extrait tous les hrefs uniques des règles à partir des flux de trafic.
-        
-        Args:
-            flows (list): Liste des flux de trafic
-            
-        Returns:
-            list: Liste des hrefs uniques des règles
-        """
-        # Utiliser le parseur de règles pour extraire les hrefs
-        return RuleParser.extract_rule_hrefs(flows)
-    
-    def get_rule_details(self, rule_hrefs: List[str]) -> List[Dict[str, Any]]:
-        """
-        Récupère les détails des règles à partir de leurs hrefs.
-        
-        Args:
-            rule_hrefs (list): Liste des hrefs des règles
-            
-        Returns:
-            list: Liste des détails de règles
-        """
-        # Essayer d'abord de récupérer les règles depuis la base de données
-        rules = []
-        
-        if hasattr(self.db, 'get_rules_by_hrefs'):
-            rules = self.db.get_rules_by_hrefs(rule_hrefs)
-        
-        # Si certaines règles n'ont pas été trouvées, essayer avec l'API
-        if len(rules) < len(rule_hrefs):
-            # Déterminer quels hrefs manquent
-            found_hrefs = set()
-            for rule in rules:
-                if rule and 'raw_data' in rule and rule['raw_data']:
-                    # Extraire le href en utilisant le parseur
-                    href = None
-                    if isinstance(rule['raw_data'], str):
-                        try:
-                            raw_data = json.loads(rule['raw_data'])
-                            href = raw_data.get('href')
-                        except json.JSONDecodeError:
-                            pass
-                    elif isinstance(rule['raw_data'], dict):
-                        href = rule['raw_data'].get('href')
-                    
-                    if href:
-                        found_hrefs.add(href)
-            
-            missing_hrefs = [href for href in rule_hrefs if href not in found_hrefs]
-            
-            # Récupérer les règles manquantes depuis l'API
-            for href in missing_hrefs:
-                try:
-                    raw_rule = self.api.get_rule_by_href(href)
-                    if raw_rule:
-                        # Convertir la règle en format de base de données
-                        rule = RuleConverter.from_dict(raw_rule)
-                        rules.append(rule)
-                except Exception as e:
-                    print(f"Erreur lors de la récupération de la règle {href}: {e}")
-        
-        return rules
-    
-    def get_detailed_rules(self, rule_hrefs: List[str]) -> List[Dict[str, Any]]:
-        """
-        Récupère les détails complets des règles, y compris les objets associés (labels, workloads, etc.).
-        
-        Args:
-            rule_hrefs (list): Liste des hrefs des règles
-            
-        Returns:
-            list: Liste des règles avec les détails des objets
-        """
-        # Récupérer les règles de base
-        basic_rules = self.get_rule_details(rule_hrefs)
-        detailed_rules = []
-        
-        for rule in basic_rules:
-            try:
-                # Convertir la règle en un format normalisé
-                if 'raw_data' in rule and rule['raw_data']:
-                    # Si raw_data est une chaîne JSON, la convertir en dictionnaire
-                    if isinstance(rule['raw_data'], str):
-                        try:
-                            rule_data = json.loads(rule['raw_data'])
-                        except json.JSONDecodeError:
-                            rule_data = rule
-                    else:
-                        rule_data = rule['raw_data']
-                else:
-                    rule_data = rule
-                
-                # Utiliser le parseur pour normaliser la règle
-                normalized_rule = RuleParser.parse_rule(rule_data)
-                
-                # Si rule est une règle de ruleset, il pourrait contenir des informations de scopes
-                # Essayer de récupérer les scopes depuis rule_data si présent
-                if 'scopes' not in normalized_rule and isinstance(rule_data, dict) and 'scopes' in rule_data:
-                    normalized_rule['scopes'] = RuleParser._parse_scopes(rule_data['scopes'])
-                
-                # Enrichir les acteurs (providers et consumers) avec les noms d'objets
-                if 'providers' in normalized_rule:
-                    normalized_rule['providers'] = self._enrich_actors(normalized_rule['providers'])
-                
-                if 'consumers' in normalized_rule:
-                    normalized_rule['consumers'] = self._enrich_actors(normalized_rule['consumers'])
-                
-                # Enrichir les services avec plus de détails
-                if 'services' in normalized_rule:
-                    normalized_rule['services'] = self._enrich_services(normalized_rule['services'])
-                
-                detailed_rules.append(normalized_rule)
-            except Exception as e:
-                print(f"Erreur lors de l'enrichissement de la règle {rule.get('id', 'inconnue')}: {e}")
-                import traceback
-                traceback.print_exc()
-                # Ajouter la règle non enrichie
-                detailed_rules.append(rule)
-        
-        return detailed_rules
