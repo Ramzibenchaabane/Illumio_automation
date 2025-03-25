@@ -70,11 +70,16 @@ class RuleParser:
         Returns:
             Dictionnaire normalisé de la règle
         """
+        # DEBUG: Afficher le début des données de règle
+        rule_id = rule_data.get('id', 'unknown')
+        print(f"\n[DEBUG] Parsing rule {rule_id}")
+        
         # Si rule_data est un objet ou contient des données JSON brutes
         if not isinstance(rule_data, dict):
             if hasattr(rule_data, '__dict__'):
                 rule_data = rule_data.__dict__
             else:
+                print(f"[DEBUG] Rule data type is not dict: {type(rule_data)}")
                 return {
                     'error': f"Type de règle non supporté: {type(rule_data)}",
                     'raw_data': str(rule_data)
@@ -88,14 +93,17 @@ class RuleParser:
                 if parsed_raw_data:
                     # Extraire les données de raw_data
                     raw_data = parsed_raw_data
+                    print(f"[DEBUG] Successfully parsed raw_data JSON string")
             except json.JSONDecodeError:
                 # En cas d'erreur de parsing, conserver raw_data tel quel
+                print(f"[DEBUG] Failed to parse raw_data JSON string")
                 pass
         elif isinstance(raw_data, dict):
             # raw_data est déjà un dictionnaire, pas besoin de le parser
-            pass
+            print(f"[DEBUG] raw_data is already a dictionary")
         else:
             # Utiliser rule_data directement si raw_data n'est pas utilisable
+            print(f"[DEBUG] Using rule_data directly, raw_data type: {type(raw_data)}")
             raw_data = rule_data
         
         # Extraction de l'ID de la règle
@@ -121,15 +129,49 @@ class RuleParser:
         if isinstance(raw_data, dict) and 'scopes' in raw_data:
             scopes = raw_data.get('scopes')
         
+        # DEBUG: Vérifier la présence de providers/consumers
+        if isinstance(rule_data, dict):
+            providers_data = rule_data.get('providers')
+            if providers_data:
+                print(f"[DEBUG] rule_data contains providers, type: {type(providers_data)}")
+                if isinstance(providers_data, str):
+                    try:
+                        parsed = json.loads(providers_data)
+                        print(f"[DEBUG] Parsed providers string to {type(parsed)}, length: {len(parsed) if isinstance(parsed, list) else 'N/A'}")
+                    except:
+                        print("[DEBUG] Failed to parse providers string")
+            else:
+                print("[DEBUG] No providers in rule_data")
+                
+        if isinstance(raw_data, dict):
+            raw_providers = raw_data.get('providers')
+            if raw_providers:
+                print(f"[DEBUG] raw_data contains providers, type: {type(raw_providers)}, length: {len(raw_providers) if isinstance(raw_providers, list) else 'N/A'}")
+            else:
+                print("[DEBUG] No providers in raw_data")
+        
         # Construction de la règle normalisée
+        print(f"[DEBUG] Creating normalized rule")
+        
+        providers = rule_data.get('providers') or raw_data.get('providers', [])
+        consumers = rule_data.get('consumers') or raw_data.get('consumers', [])
+        
+        print(f"[DEBUG] Parsing providers, type: {type(providers)}")
+        parsed_providers = RuleParser._parse_actors(providers)
+        print(f"[DEBUG] Got {len(parsed_providers)} parsed providers")
+        
+        print(f"[DEBUG] Parsing consumers, type: {type(consumers)}")
+        parsed_consumers = RuleParser._parse_actors(consumers)
+        print(f"[DEBUG] Got {len(parsed_consumers)} parsed consumers")
+        
         normalized_rule = {
             'id': rule_id,
             'href': href,
             'name': name,
             'description': RuleParser._extract_description(rule_data, raw_data),
             'enabled': RuleParser._extract_enabled(rule_data, raw_data),
-            'providers': RuleParser._parse_actors(rule_data.get('providers') or raw_data.get('providers', [])),
-            'consumers': RuleParser._parse_actors(rule_data.get('consumers') or raw_data.get('consumers', [])),
+            'providers': parsed_providers,
+            'consumers': parsed_consumers,
             'services': RuleParser._parse_services(rule_data.get('ingress_services') or raw_data.get('ingress_services', [])),
             'resolve_labels_as': rule_data.get('resolve_labels_as') or raw_data.get('resolve_labels_as'),
             'sec_connect': rule_data.get('sec_connect') or raw_data.get('sec_connect', False),
@@ -144,6 +186,7 @@ class RuleParser:
         if 'raw_data' not in normalized_rule:
             normalized_rule['raw_data'] = raw_data
         
+        print(f"[DEBUG] Completed parsing rule {rule_id}")
         return normalized_rule
     
     @staticmethod
@@ -228,22 +271,32 @@ class RuleParser:
             Liste des acteurs normalisés
         """
         if not actors_data:
+            print(f"[DEBUG] actors_data is empty or None")
             return []
         
         # Si c'est une chaîne JSON, la convertir
         if isinstance(actors_data, str):
+            print(f"[DEBUG] actors_data is a string, attempting to parse JSON")
             try:
                 actors_data = json.loads(actors_data)
+                print(f"[DEBUG] Successfully parsed actors_data JSON string to: {type(actors_data)}")
             except json.JSONDecodeError:
+                print(f"[DEBUG] Failed to parse actors_data JSON string")
                 return []
         
         if not isinstance(actors_data, list):
+            print(f"[DEBUG] actors_data is not a list: {type(actors_data)}")
             return []
         
+        print(f"[DEBUG] Processing {len(actors_data)} actors")
+        
         normalized_actors = []
-        for actor in actors_data:
+        for i, actor in enumerate(actors_data):
             if not isinstance(actor, dict):
+                print(f"[DEBUG] Actor {i} is not a dict: {type(actor)}")
                 continue
+                
+            print(f"[DEBUG] Processing actor {i}, keys: {list(actor.keys())}")
                 
             actor_type = None
             actor_value = None
@@ -252,18 +305,24 @@ class RuleParser:
             if 'actors' in actor and actor['actors'] == 'ams':
                 actor_type = 'ams'
                 actor_value = 'All Managed Systems'
+                print(f"[DEBUG] Actor {i} is AMS")
             elif 'label' in actor and isinstance(actor['label'], dict):
                 actor_type = 'label'
                 label = actor['label']
+                print(f"[DEBUG] Actor {i} is Label, keys: {list(label.keys())}")
                 key = label.get('key')
                 value = label.get('value')
+                
+                print(f"[DEBUG] Label {i} key: '{key}', value: '{value}'")
                 
                 # Important: Conserver explicitement key et value dans l'acteur normalisé
                 if key is not None and value is not None:  # Vérification explicite pour éviter les valeurs vides
                     actor_value = f"{key}:{value}"
+                    print(f"[DEBUG] Label {i} formatted value: '{actor_value}'")
                 else:
                     # Si key ou value est absent/vide, on utilise ce qui est disponible
                     actor_value = key or value or "unknown_label"
+                    print(f"[DEBUG] Label {i} using fallback value: '{actor_value}'")
                     
                 # Créer l'acteur avec toutes les informations nécessaires
                 normalized_actor = {
@@ -276,6 +335,8 @@ class RuleParser:
                     'raw_data': actor
                 }
                 
+                print(f"[DEBUG] Created normalized label with key='{key}', value='{value}'")
+                
                 normalized_actors.append(normalized_actor)
                 continue
                 
@@ -285,18 +346,23 @@ class RuleParser:
                 href = lg.get('href')
                 name = lg.get('name')
                 actor_value = name or ApiResponseParser.extract_id_from_href(href)
+                print(f"[DEBUG] Actor {i} is Label Group: '{actor_value}'")
             elif 'workload' in actor and isinstance(actor['workload'], dict):
                 actor_type = 'workload'
                 wl = actor['workload']
                 href = wl.get('href')
                 name = wl.get('name')
                 actor_value = name or ApiResponseParser.extract_id_from_href(href)
+                print(f"[DEBUG] Actor {i} is Workload: '{actor_value}'")
             elif 'ip_list' in actor and isinstance(actor['ip_list'], dict):
                 actor_type = 'ip_list'
                 ip = actor['ip_list']
                 href = ip.get('href')
                 name = ip.get('name')
                 actor_value = name or ApiResponseParser.extract_id_from_href(href)
+                print(f"[DEBUG] Actor {i} is IP List: '{actor_value}'")
+            else:
+                print(f"[DEBUG] Actor {i} is of unknown type, keys: {list(actor.keys())}")
             
             if actor_type and not actor_type == 'label':  # Les labels sont déjà traités
                 normalized_actor = {
@@ -320,6 +386,13 @@ class RuleParser:
                         normalized_actor['href'] = href
                 
                 normalized_actors.append(normalized_actor)
+        
+        print(f"[DEBUG] Returning {len(normalized_actors)} normalized actors")
+        
+        # DEBUG: Afficher les acteurs de type label
+        for i, actor in enumerate(normalized_actors):
+            if actor.get('type') == 'label':
+                print(f"[DEBUG] Normalized label {i}: key='{actor.get('key')}', value='{actor.get('value')}'")
         
         return normalized_actors
     

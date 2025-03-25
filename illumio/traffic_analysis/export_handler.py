@@ -67,8 +67,10 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             elif format_type.lower() in ('excel', 'xlsx'):
                 # Extract rule hrefs
                 rule_hrefs = self.extract_rule_hrefs(processed_flows)
+                print(f"[DEBUG] Extracted {len(rule_hrefs)} rule hrefs from flows")
                 # Get detailed rule information
                 rule_details = self.get_detailed_rules(rule_hrefs)
+                print(f"[DEBUG] Retrieved {len(rule_details)} detailed rules")
                 
                 # Export to Excel with both sheets
                 return self._export_to_excel(processed_flows, filename, rule_details)
@@ -122,6 +124,8 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 if not filename.endswith('.xlsx'):
                     filename += '.xlsx'
             
+            print(f"[DEBUG] Creating Excel export: {filename}")
+            
             # Create a DataFrame for the flows
             flow_rows = []
             for flow in flows:
@@ -162,11 +166,15 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             flows_df = pd.DataFrame(flow_rows)
             
             # Prepare the rules for the second sheet
+            print(f"[DEBUG] Formatting {len(rule_details)} rules for Excel")
             rule_rows = []
-            for rule in rule_details:
+            for i, rule in enumerate(rule_details):
+                print(f"[DEBUG] Formatting rule {i+1}/{len(rule_details)}: {rule.get('id', 'unknown')}")
                 rule_row = self._format_rule_for_excel(rule)
                 if rule_row:
                     rule_rows.append(rule_row)
+                else:
+                    print(f"[DEBUG] Failed to format rule {i+1}")
             
             rules_df = pd.DataFrame(rule_rows) if rule_rows else None
             
@@ -207,8 +215,13 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         """
         try:
             if not rule:
+                print("[DEBUG] Rule is empty or None")
                 return None
                 
+            # DEBUG: Afficher la structure de la règle
+            print(f"[DEBUG] Formatting rule: {rule.get('id', 'unknown')}")
+            print(f"[DEBUG] Rule keys: {list(rule.keys())}")
+            
             # Basic rule information
             rule_id = rule.get('id', '')
             if not rule_id and 'href' in rule:
@@ -224,17 +237,21 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             # Format providers (sources)
             providers = rule.get('providers', [])
             if providers:
+                print(f"[DEBUG] Rule has {len(providers)} providers")
                 provider_str = self._format_actors(providers)
                 rule_row['Sources'] = provider_str
             else:
+                print("[DEBUG] Rule has no providers")
                 rule_row['Sources'] = 'Toutes'
                 
             # Format consumers (destinations)
             consumers = rule.get('consumers', [])
             if consumers:
+                print(f"[DEBUG] Rule has {len(consumers)} consumers")
                 consumer_str = self._format_actors(consumers)
                 rule_row['Destinations'] = consumer_str
             else:
+                print("[DEBUG] Rule has no consumers")
                 rule_row['Destinations'] = 'Toutes'
                 
             # Format services
@@ -256,10 +273,13 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             rule_row['SecConnect'] = 'Oui' if rule.get('sec_connect', False) else 'Non'
             rule_row['Unscoped Consumers'] = 'Oui' if rule.get('unscoped_consumers', False) else 'Non'
             
+            print(f"[DEBUG] Successfully formatted rule {rule_id}")
             return rule_row
             
         except Exception as e:
             print(f"Erreur lors du formatage de la règle {rule.get('id', 'inconnue')}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _format_scopes(self, scopes: List[List[Dict[str, Any]]]) -> str:
@@ -306,26 +326,72 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             Formatted string of actor names
         """
         if not actors:
+            print("[DEBUG] No actors to format")
             return "Aucun"
             
+        print(f"[DEBUG] Formatting {len(actors)} actors")
+            
+        # Debugging: print the full structure of the actors
+        print("\n===== DEBUG: ACTORS STRUCTURE =====")
+        for i, actor in enumerate(actors):
+            print(f"Actor {i}:")
+            print(f"  Type: {actor.get('type')}")
+            print(f"  Value: {actor.get('value')}")
+            if actor.get('type') == 'label':
+                print(f"  Key: {actor.get('key')}")
+                print(f"  Value as field: {actor.get('value')}")
+                
+                # Try to extract from raw_data
+                if 'raw_data' in actor and actor['raw_data']:
+                    raw = actor['raw_data']
+                    print(f"  Has raw_data: {bool(raw)}")
+                    if isinstance(raw, dict) and 'label' in raw:
+                        label_data = raw['label']
+                        print(f"  Raw label data: {label_data}")
+                        if isinstance(label_data, dict):
+                            print(f"  Raw label key: {label_data.get('key')}")
+                            print(f"  Raw label value: {label_data.get('value')}")
+        print("====================================\n")
+            
         actor_descriptions = []
-        for actor in actors:
+        for i, actor in enumerate(actors):
+            print(f"[DEBUG] Processing actor {i}")
             actor_type = actor.get('type')
             
             if not actor_type:
+                print(f"[DEBUG] Actor {i} has no type")
                 continue
                 
             value = actor.get('value', '')
             
+            print(f"[DEBUG] Actor {i} is of type '{actor_type}' with value '{value}'")
+            
             if actor_type == 'label':
-                # Utiliser les informations directes du label
-                key = actor.get('key')
-                val = actor.get('value')
+                # Extract directly from raw_data if available
+                raw_data = actor.get('raw_data', {})
+                key = None
+                val = None
+                
+                if isinstance(raw_data, dict) and 'label' in raw_data and isinstance(raw_data['label'], dict):
+                    # Extract from raw_data.label
+                    label_data = raw_data['label']
+                    print(f"[DEBUG] Actor {i} has label data in raw_data")
+                    key = label_data.get('key')
+                    val = label_data.get('value')
+                    print(f"[DEBUG] From raw_data: key='{key}', val='{val}'")
+                
+                # If not found in raw_data, try actor fields
+                if not (key and val):
+                    key = actor.get('key')
+                    val = actor.get('value')
+                    print(f"[DEBUG] From actor fields: key='{key}', val='{val}'")
                 
                 if key and val:
+                    print(f"[DEBUG] Using key='{key}', val='{val}'")
                     actor_descriptions.append(f"Label: {key}:{val}")
                 else:
-                    # Utiliser la valeur formatée (qui peut contenir "key:value")
+                    # Use formatted value as fallback
+                    print(f"[DEBUG] Using formatted value='{value}'")
                     actor_descriptions.append(f"Label: {value}")
                 
             elif actor_type == 'label_group':
@@ -363,8 +429,10 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 
             else:
                 actor_descriptions.append(f"{actor_type}: {value}")
-                
-        return " | ".join(actor_descriptions) if actor_descriptions else "Aucun"
+        
+        result = " | ".join(actor_descriptions) if actor_descriptions else "Aucun"
+        print(f"[DEBUG] Final formatted actors: {result}")
+        return result
     
     def _format_services(self, services: List[Dict[str, Any]]) -> str:
         """
@@ -605,6 +673,121 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         # Utiliser le parseur de règles pour extraire les hrefs
         return RuleParser.extract_rule_hrefs(flows)
     
+    def _inspect_rule_source(self, rule_href: str):
+        """
+        Méthode de débogage pour inspecter la source d'une règle dans la base de données.
+        
+        Args:
+            rule_href: Href de la règle à inspecter
+        """
+        print(f"\n===== INSPECTION DE LA RÈGLE: {rule_href} =====")
+        
+        try:
+            # Extraire l'ID de la règle depuis le href
+            rule_id = rule_href.split('/')[-1] if rule_href else None
+            if not rule_id:
+                print("❌ Impossible d'extraire l'ID depuis le href")
+                return
+                
+            # Récupérer la règle directement depuis la base de données
+            conn, cursor = self.db.connect()
+            cursor.execute("SELECT * FROM rules WHERE id = ?", (rule_id,))
+            row = cursor.fetchone()
+            self.db.close(conn)
+            
+            if not row:
+                print(f"❌ Règle {rule_id} non trouvée dans la base de données")
+                return
+                
+            # Créer un dictionnaire à partir de la ligne
+            rule_db = dict(row) if hasattr(row, 'keys') else row
+            
+            # Afficher les champs clés
+            print(f"ID: {rule_db.get('id')}")
+            print(f"Nom: {rule_db.get('name')}")
+            
+            # Examiner les providers et consumers
+            providers_str = rule_db.get('providers')
+            if providers_str:
+                try:
+                    providers = json.loads(providers_str)
+                    print(f"Providers: {len(providers) if providers else 0} trouvés")
+                    self._inspect_actors(providers, "Provider")
+                except json.JSONDecodeError:
+                    print("❌ Erreur lors du décodage des providers")
+                    
+            consumers_str = rule_db.get('consumers')
+            if consumers_str:
+                try:
+                    consumers = json.loads(consumers_str)
+                    print(f"Consumers: {len(consumers) if consumers else 0} trouvés")
+                    self._inspect_actors(consumers, "Consumer")
+                except json.JSONDecodeError:
+                    print("❌ Erreur lors du décodage des consumers")
+                    
+            # Examiner les données brutes
+            raw_data_str = rule_db.get('raw_data')
+            if raw_data_str:
+                try:
+                    raw_data = json.loads(raw_data_str)
+                    print(f"Raw data: {type(raw_data)}")
+                    
+                    # Vérifier si les données brutes contiennent des providers/consumers
+                    if isinstance(raw_data, dict):
+                        raw_providers = raw_data.get('providers', [])
+                        if raw_providers:
+                            print(f"Raw providers: {len(raw_providers)} trouvés")
+                            self._inspect_actors(raw_providers, "Raw Provider")
+                            
+                        raw_consumers = raw_data.get('consumers', [])
+                        if raw_consumers:
+                            print(f"Raw consumers: {len(raw_consumers)} trouvés")
+                            self._inspect_actors(raw_consumers, "Raw Consumer")
+                    
+                except json.JSONDecodeError:
+                    print("❌ Erreur lors du décodage de raw_data")
+                    
+            print("===== FIN DE L'INSPECTION =====\n")
+        except Exception as e:
+            print(f"❌ Erreur lors de l'inspection: {e}")
+            
+    def _inspect_actors(self, actors, actor_type):
+        """Inspects actor objects to identify label information."""
+        if not actors:
+            print(f"  {actor_type}: Aucun acteur")
+            return
+            
+        for i, actor in enumerate(actors):
+            if not isinstance(actor, dict):
+                print(f"  {actor_type} {i}: N'est pas un dictionnaire")
+                continue
+                
+            if 'label' in actor:
+                label = actor['label']
+                if isinstance(label, dict):
+                    print(f"  {actor_type} {i} (Label): ")
+                    print(f"    Key: {label.get('key')}")
+                    print(f"    Value: {label.get('value')}")
+                    print(f"    Href: {label.get('href')}")
+                else:
+                    print(f"  {actor_type} {i} (Label): N'est pas un dictionnaire - {label}")
+            elif 'type' in actor and actor['type'] == 'label':
+                print(f"  {actor_type} {i} (Parsed Label): ")
+                print(f"    Type: {actor.get('type')}")
+                print(f"    Value: {actor.get('value')}")
+                print(f"    Key: {actor.get('key')}")
+                print(f"    Value as field: {actor.get('value')}")
+            elif 'actors' in actor and actor['actors'] == 'ams':
+                print(f"  {actor_type} {i}: AMS (All Managed Systems)")
+            elif 'workload' in actor:
+                print(f"  {actor_type} {i}: Workload")
+            elif 'ip_list' in actor:
+                print(f"  {actor_type} {i}: IP List")
+            elif 'label_group' in actor:
+                print(f"  {actor_type} {i}: Label Group")
+            else:
+                print(f"  {actor_type} {i}: Type inconnu - {actor}")
+                
     def get_detailed_rules(self, rule_hrefs: List[str]) -> List[Dict[str, Any]]:
         """
         Récupère les détails complets des règles à partir de leurs hrefs depuis la base de données locale.
@@ -619,6 +802,15 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         if not rule_hrefs:
             return []
         
+        # Debug: Inspecter quelques règles
+        print(f"\nDébogage de {len(rule_hrefs)} règles...")
+        if rule_hrefs:
+            # Inspecter la première règle
+            self._inspect_rule_source(rule_hrefs[0])
+            # Si plus d'une règle, inspecter aussi la dernière
+            if len(rule_hrefs) > 1:
+                self._inspect_rule_source(rule_hrefs[-1])
+        
         # Ne récupérer les règles que depuis la base de données locale
         detailed_rules = []
         
@@ -627,64 +819,100 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             if hasattr(self.db, 'get_rules_by_hrefs'):
                 rules = self.db.get_rules_by_hrefs(rule_hrefs)
                 
+                print(f"Récupération de {len(rules)} règles depuis la base de données")
+                
                 # Transformation finale des règles pour l'affichage
                 for rule in rules:
                     try:
+                        # Débogage pour comprendre la structure complète
+                        rule_id = rule.get('id', 'unknown')
+                        print(f"\nTraitement de la règle {rule_id}:")
+                        
+                        # Vérifier les champs clés de la règle
+                        print(f"Fields: {list(rule.keys())}")
+                        
                         # Vérifier si la règle contient des données brutes
                         if 'raw_data' in rule and rule['raw_data']:
+                            print(f"La règle a des données brutes")
+                            raw_data = None
+                            
                             # Si raw_data est une chaîne JSON, la parser
                             if isinstance(rule['raw_data'], str):
                                 try:
                                     raw_data = json.loads(rule['raw_data'])
+                                    print(f"raw_data parsed, type: {type(raw_data)}")
                                     
-                                    # Fusionner les données brutes avec la règle actuelle pour préserver toutes les informations
-                                    merged_rule = rule.copy()
+                                    # Vérifier si raw_data contient des providers/consumers
                                     if isinstance(raw_data, dict):
-                                        # Ne pas écraser les champs existants sauf raw_data
-                                        for key, value in raw_data.items():
-                                            if key != 'raw_data':
-                                                merged_rule[key] = value
+                                        if 'providers' in raw_data:
+                                            providers = raw_data['providers']
+                                            print(f"raw_data contient {len(providers) if providers else 0} providers")
+                                        if 'consumers' in raw_data:
+                                            consumers = raw_data['consumers']
+                                            print(f"raw_data contient {len(consumers) if consumers else 0} consumers")
                                     
-                                    # Utiliser le parseur pour normaliser la règle
-                                    normalized_rule = RuleParser.parse_rule(merged_rule)
+                                    # Utilisation directe des données brutes pour le parsing
+                                    print("Utilisation directe des données brutes pour le parsing")
+                                    normalized_rule = RuleParser.parse_rule(raw_data)
                                     
                                     if normalized_rule:
                                         detailed_rules.append(normalized_rule)
+                                        print("✅ Règle normalisée avec succès à partir des données brutes")
                                     else:
-                                        print(f"Warning: Unable to normalize rule {rule.get('id', 'unknown')}")
+                                        print("❌ Échec de la normalisation à partir des données brutes")
                                 except json.JSONDecodeError as e:
-                                    print(f"Error parsing rule raw_data JSON: {e}")
-                                    # Essayer de parser la règle sans raw_data
+                                    print(f"❌ Erreur de parsing JSON: {e}")
                                     normalized_rule = RuleParser.parse_rule(rule)
                                     if normalized_rule:
                                         detailed_rules.append(normalized_rule)
                             else:
-                                # Si raw_data est déjà un objet, fusionner avec la règle
-                                merged_rule = rule.copy()
-                                if isinstance(rule['raw_data'], dict):
-                                    for key, value in rule['raw_data'].items():
-                                        if key != 'raw_data':
-                                            merged_rule[key] = value
-                                
-                                normalized_rule = RuleParser.parse_rule(merged_rule)
+                                # Si raw_data est déjà un objet
+                                print("raw_data est déjà un objet")
+                                normalized_rule = RuleParser.parse_rule(rule['raw_data'])
                                 if normalized_rule:
                                     detailed_rules.append(normalized_rule)
                         else:
                             # Si pas de raw_data, utiliser la règle directement
+                            print("La règle n'a pas de données brutes, utilisation directe")
                             normalized_rule = RuleParser.parse_rule(rule)
                             if normalized_rule:
                                 detailed_rules.append(normalized_rule)
                     except Exception as e:
-                        print(f"Error processing rule {rule.get('id', 'unknown')}: {e}")
+                        print(f"❌ Erreur lors du traitement de la règle {rule.get('id', 'unknown')}: {e}")
+                
+                print(f"\nNormalisation terminée, {len(detailed_rules)} règles traitées")
+                
+                # Vérifier les règles normalisées
+                for i, rule in enumerate(detailed_rules[:2]):  # Afficher les 2 premières
+                    print(f"\nRègle normalisée {i}:")
+                    
+                    # Vérifier les providers et consumers
+                    providers = rule.get('providers', [])
+                    if providers:
+                        print(f"  {len(providers)} providers:")
+                        for j, provider in enumerate(providers[:2]):  # Afficher les 2 premiers
+                            print(f"    Provider {j}: {provider.get('type')} - {provider.get('value')}")
+                            if provider.get('type') == 'label':
+                                print(f"      Label key: {provider.get('key')}")
+                                print(f"      Label value: {provider.get('value')}")
+                    
+                    consumers = rule.get('consumers', [])
+                    if consumers:
+                        print(f"  {len(consumers)} consumers:")
+                        for j, consumer in enumerate(consumers[:2]):  # Afficher les 2 premiers
+                            print(f"    Consumer {j}: {consumer.get('type')} - {consumer.get('value')}")
+                            if consumer.get('type') == 'label':
+                                print(f"      Label key: {consumer.get('key')}")
+                                print(f"      Label value: {consumer.get('value')}")
             else:
-                print("Warning: Database doesn't support get_rules_by_hrefs method")
+                print("❗ La base de données ne supporte pas get_rules_by_hrefs")
         except Exception as e:
             import traceback
-            print(f"Error retrieving rules from database: {e}")
+            print(f"❌ Erreur lors de la récupération des règles: {e}")
             traceback.print_exc()
             
         return detailed_rules
-    
+        
     def export_query_results(self, 
                              query_id: str, 
                              format_type: str = 'json', 
@@ -719,8 +947,10 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         if format_type.lower() in ('excel', 'xlsx') or output_file.endswith('.xlsx'):
             # Extract rule hrefs
             rule_hrefs = self.extract_rule_hrefs(processed_flows)
+            print(f"[DEBUG] Extracted {len(rule_hrefs)} rule hrefs for export")
             # Get detailed rule information from the database
             rule_details = self.get_detailed_rules(rule_hrefs)
+            print(f"[DEBUG] Retrieved {len(rule_details)} detailed rules for export")
             
             # Export to Excel with both sheets
             return self._export_to_excel(processed_flows, output_file, rule_details)
