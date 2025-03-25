@@ -107,10 +107,16 @@ class RuleParser:
         if not href and isinstance(raw_data, dict):
             href = raw_data.get('href')
         
+        # Extraction du nom de la règle
+        name = rule_data.get('name')
+        if not name and isinstance(raw_data, dict):
+            name = raw_data.get('name')
+        
         # Construction de la règle normalisée
         normalized_rule = {
             'id': rule_id,
             'href': href,
+            'name': name,
             'description': RuleParser._extract_description(rule_data, raw_data),
             'enabled': RuleParser._extract_enabled(rule_data, raw_data),
             'providers': RuleParser._parse_actors(rule_data.get('providers') or raw_data.get('providers', [])),
@@ -210,11 +216,27 @@ class RuleParser:
                 actor_value = ip.get('name') or ApiResponseParser.extract_id_from_href(ip.get('href'))
             
             if actor_type and actor_value:
-                normalized_actors.append({
+                normalized_actor = {
                     'type': actor_type,
                     'value': actor_value,
                     'raw_data': actor
-                })
+                }
+                
+                # Extraire l'ID ou le href si disponible pour références ultérieures
+                if actor_type == 'label_group' and 'label_group' in actor:
+                    href = actor['label_group'].get('href')
+                    if href:
+                        normalized_actor['href'] = href
+                elif actor_type == 'workload' and 'workload' in actor:
+                    href = actor['workload'].get('href')
+                    if href:
+                        normalized_actor['href'] = href
+                elif actor_type == 'ip_list' and 'ip_list' in actor:
+                    href = actor['ip_list'].get('href')
+                    if href:
+                        normalized_actor['href'] = href
+                
+                normalized_actors.append(normalized_actor)
         
         return normalized_actors
     
@@ -254,18 +276,21 @@ class RuleParser:
                     'type': 'service',
                     'id': service_id,
                     'name': service.get('name') or f"Service {service_id}",
+                    'href': service.get('href'),
                     'raw_data': service
                 })
             elif 'proto' in service:
                 # Service défini directement
                 proto = service['proto']
                 port = service.get('port')
+                to_port = service.get('to_port', port)
                 port_text = f":{port}" if port else ""
                 
                 normalized_services.append({
                     'type': 'proto',
                     'proto': proto,
                     'port': port,
+                    'to_port': to_port,
                     'description': f"Proto {proto}{port_text}",
                     'raw_data': service
                 })

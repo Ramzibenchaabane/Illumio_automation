@@ -36,9 +36,13 @@ class RuleConverter:
             href = rule['href']
             rule_id = href.split('/')[-1] if href else None
         
+        # Extraire le nom de la règle
+        name = rule.get('name', '')
+            
         # Créer une base pour l'entité de base de données
         db_rule = {
             'id': rule_id,
+            'name': name,
             'description': rule.get('description'),
             'enabled': 1 if rule.get('enabled') else 0,
             'resolve_labels_as': json.dumps(rule['resolve_labels_as']) if isinstance(rule.get('resolve_labels_as'), dict) else rule.get('resolve_labels_as'),
@@ -81,6 +85,7 @@ class RuleConverter:
         # Reconstruire la structure de la règle
         normalized_rule = {
             'id': rule.get('id'),
+            'name': rule.get('name'),
             'rule_set_id': rule.get('rule_set_id'),
             'description': rule.get('description'),
             'enabled': bool(rule.get('enabled')),
@@ -218,3 +223,61 @@ class RuleConverter:
                     rules.append(rule_with_parent)
         
         return rules
+    
+    @staticmethod
+    def from_dict(rule_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Crée une règle à partir d'un dictionnaire, en normalisant la structure.
+        
+        Args:
+            rule_dict: Dictionnaire source
+            
+        Returns:
+            Règle normalisée
+        """
+        if not rule_dict:
+            return {}
+        
+        # Normaliser les champs de base
+        rule = {
+            'id': rule_dict.get('id'),
+            'name': rule_dict.get('name'),
+            'href': rule_dict.get('href'),
+            'description': rule_dict.get('description'),
+            'enabled': bool(rule_dict.get('enabled', True)),
+            'sec_connect': bool(rule_dict.get('sec_connect', False)),
+            'unscoped_consumers': bool(rule_dict.get('unscoped_consumers', False)),
+            'resolve_labels_as': rule_dict.get('resolve_labels_as'),
+            'raw_data': rule_dict
+        }
+        
+        # Extraire ou créer les acteurs (providers, consumers)
+        if 'providers' in rule_dict:
+            providers = rule_dict['providers']
+            if isinstance(providers, list):
+                providers_list = []
+                for provider in providers:
+                    if isinstance(provider, dict):
+                        providers_list.append(provider)
+                rule['providers'] = providers_list
+        
+        if 'consumers' in rule_dict:
+            consumers = rule_dict['consumers']
+            if isinstance(consumers, list):
+                consumers_list = []
+                for consumer in consumers:
+                    if isinstance(consumer, dict):
+                        consumers_list.append(consumer)
+                rule['consumers'] = consumers_list
+        
+        # Traiter les services
+        if 'ingress_services' in rule_dict:
+            services = rule_dict['ingress_services']
+            if isinstance(services, list):
+                services_list = []
+                for service in services:
+                    if isinstance(service, dict):
+                        services_list.append(service)
+                rule['services'] = services_list
+        
+        return rule

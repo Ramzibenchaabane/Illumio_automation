@@ -48,6 +48,7 @@ class RuleSetManager:
                 CREATE TABLE IF NOT EXISTS rules (
                     id TEXT PRIMARY KEY,
                     rule_set_id TEXT,
+                    name TEXT,
                     description TEXT,
                     enabled INTEGER,
                     providers TEXT,
@@ -61,6 +62,12 @@ class RuleSetManager:
                     FOREIGN KEY (rule_set_id) REFERENCES rule_sets (id)
                 )
                 ''')
+                
+                # Ajouter un index pour les recherches rapides par rule_set_id
+                cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_rules_rule_set_id ON rules(rule_set_id)
+                ''')
+                
             return True
         except sqlite3.Error as e:
             print(f"Erreur lors de l'initialisation des tables rule sets: {e}")
@@ -254,6 +261,31 @@ class RuleSetManager:
                 
         except sqlite3.Error as e:
             print(f"Erreur lors de la récupération de la règle: {e}")
+            return None
+    
+    def get_rule_set_name(self, rule_set_id: str) -> Optional[str]:
+        """Récupère le nom d'un rule set par son ID.
+        
+        Args:
+            rule_set_id (str): ID du rule set
+            
+        Returns:
+            str: Nom du rule set ou None si non trouvé
+        """
+        try:
+            with db_connection(self.db_file) as (conn, cursor):
+                cursor.execute('''
+                SELECT name FROM rule_sets WHERE id = ?
+                ''', (rule_set_id,))
+                
+                row = cursor.fetchone()
+                if row:
+                    return row['name']
+                
+                return None
+                
+        except sqlite3.Error as e:
+            print(f"Erreur lors de la récupération du nom du rule set: {e}")
             return None
     
     def get_all_rule_sets(self, pversion: str = None) -> List[Dict[str, Any]]:
