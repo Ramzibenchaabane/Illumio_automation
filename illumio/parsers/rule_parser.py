@@ -247,7 +247,6 @@ class RuleParser:
                 
             actor_type = None
             actor_value = None
-            actor_raw = {}  # Pour stocker les données brutes pertinentes
             
             # Détecter le type d'acteur
             if 'actors' in actor and actor['actors'] == 'ams':
@@ -258,61 +257,53 @@ class RuleParser:
                 label = actor['label']
                 key = label.get('key')
                 value = label.get('value')
+                
+                # Important: Conserver explicitement key et value dans l'acteur normalisé
                 if key is not None and value is not None:  # Vérification explicite pour éviter les valeurs vides
                     actor_value = f"{key}:{value}"
-                    # Stocker les informations du label dans actor_raw
-                    actor_raw = {
-                        'key': key,
-                        'value': value,
-                        'href': label.get('href')
-                    }
                 else:
                     # Si key ou value est absent/vide, on utilise ce qui est disponible
                     actor_value = key or value or "unknown_label"
+                    
+                # Créer l'acteur avec toutes les informations nécessaires
+                normalized_actor = {
+                    'type': actor_type,
+                    'value': actor_value,
+                    # Ajouter explicitement key et value comme attributs de premier niveau
+                    'key': key,
+                    'value': value,
+                    'href': label.get('href'),
+                    'raw_data': actor
+                }
+                
+                normalized_actors.append(normalized_actor)
+                continue
+                
             elif 'label_group' in actor and isinstance(actor['label_group'], dict):
                 actor_type = 'label_group'
                 lg = actor['label_group']
                 href = lg.get('href')
                 name = lg.get('name')
                 actor_value = name or ApiResponseParser.extract_id_from_href(href)
-                # Stocker les informations du groupe de labels
-                actor_raw = {
-                    'name': name,
-                    'href': href
-                }
             elif 'workload' in actor and isinstance(actor['workload'], dict):
                 actor_type = 'workload'
                 wl = actor['workload']
                 href = wl.get('href')
                 name = wl.get('name')
                 actor_value = name or ApiResponseParser.extract_id_from_href(href)
-                # Stocker les informations du workload
-                actor_raw = {
-                    'name': name,
-                    'href': href
-                }
             elif 'ip_list' in actor and isinstance(actor['ip_list'], dict):
                 actor_type = 'ip_list'
                 ip = actor['ip_list']
                 href = ip.get('href')
                 name = ip.get('name')
                 actor_value = name or ApiResponseParser.extract_id_from_href(href)
-                # Stocker les informations de l'IP list
-                actor_raw = {
-                    'name': name,
-                    'href': href
-                }
             
-            if actor_type and actor_value:
+            if actor_type and not actor_type == 'label':  # Les labels sont déjà traités
                 normalized_actor = {
                     'type': actor_type,
-                    'value': actor_value
+                    'value': actor_value,
+                    'raw_data': actor
                 }
-                
-                # Ajouter les données brutes pertinentes
-                if actor_raw:
-                    for key, value in actor_raw.items():
-                        normalized_actor[key] = value
                 
                 # Extraire l'ID ou le href si disponible pour références ultérieures
                 if actor_type == 'label_group' and 'label_group' in actor:
@@ -327,9 +318,6 @@ class RuleParser:
                     href = actor['ip_list'].get('href')
                     if href:
                         normalized_actor['href'] = href
-                
-                # Conserver les données brutes complètes
-                normalized_actor['raw_data'] = actor
                 
                 normalized_actors.append(normalized_actor)
         

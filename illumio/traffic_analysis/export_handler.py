@@ -318,14 +318,14 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             value = actor.get('value', '')
             
             if actor_type == 'label':
-                # Utiliser les informations directes du label quand disponibles
+                # Utiliser les informations directes du label
                 key = actor.get('key')
                 val = actor.get('value')
                 
                 if key and val:
                     actor_descriptions.append(f"Label: {key}:{val}")
                 else:
-                    # Fallback sur la valeur formatée
+                    # Utiliser la valeur formatée (qui peut contenir "key:value")
                     actor_descriptions.append(f"Label: {value}")
                 
             elif actor_type == 'label_group':
@@ -608,7 +608,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
     def get_detailed_rules(self, rule_hrefs: List[str]) -> List[Dict[str, Any]]:
         """
         Récupère les détails complets des règles à partir de leurs hrefs depuis la base de données locale.
-        Cette version mise à jour se fie uniquement à la base de données locale, sans faire de requêtes API.
+        Cette version mise à jour s'assure que les informations de label sont correctement préservées.
         
         Args:
             rule_hrefs (list): Liste des hrefs des règles
@@ -630,26 +630,43 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 # Transformation finale des règles pour l'affichage
                 for rule in rules:
                     try:
-                        # Utiliser le parseur pour normaliser la structure de la règle
+                        # Vérifier si la règle contient des données brutes
                         if 'raw_data' in rule and rule['raw_data']:
-                            # Convertir raw_data en objet si c'est une chaîne JSON
+                            # Si raw_data est une chaîne JSON, la parser
                             if isinstance(rule['raw_data'], str):
                                 try:
                                     raw_data = json.loads(rule['raw_data'])
                                     
-                                    # Utiliser le parseur pour analyser et normaliser la règle
-                                    normalized_rule = RuleParser.parse_rule(raw_data)
+                                    # Fusionner les données brutes avec la règle actuelle pour préserver toutes les informations
+                                    merged_rule = rule.copy()
+                                    if isinstance(raw_data, dict):
+                                        # Ne pas écraser les champs existants sauf raw_data
+                                        for key, value in raw_data.items():
+                                            if key != 'raw_data':
+                                                merged_rule[key] = value
                                     
-                                    # Si le parsing a réussi, ajouter la règle normalisée
+                                    # Utiliser le parseur pour normaliser la règle
+                                    normalized_rule = RuleParser.parse_rule(merged_rule)
+                                    
                                     if normalized_rule:
                                         detailed_rules.append(normalized_rule)
                                     else:
                                         print(f"Warning: Unable to normalize rule {rule.get('id', 'unknown')}")
                                 except json.JSONDecodeError as e:
                                     print(f"Error parsing rule raw_data JSON: {e}")
+                                    # Essayer de parser la règle sans raw_data
+                                    normalized_rule = RuleParser.parse_rule(rule)
+                                    if normalized_rule:
+                                        detailed_rules.append(normalized_rule)
                             else:
-                                # Si raw_data est déjà un objet, l'utiliser directement
-                                normalized_rule = RuleParser.parse_rule(rule)
+                                # Si raw_data est déjà un objet, fusionner avec la règle
+                                merged_rule = rule.copy()
+                                if isinstance(rule['raw_data'], dict):
+                                    for key, value in rule['raw_data'].items():
+                                        if key != 'raw_data':
+                                            merged_rule[key] = value
+                                
+                                normalized_rule = RuleParser.parse_rule(merged_rule)
                                 if normalized_rule:
                                     detailed_rules.append(normalized_rule)
                         else:
