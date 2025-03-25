@@ -5,17 +5,13 @@ Module pour l'analyse de trafic via l'importation de fichiers Excel.
 """
 import os
 import time
-import json
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 import pandas as pd
 
 from illumio.utils.directory_manager import get_input_dir, list_files, get_file_path, get_output_dir
 from illumio.formatters.traffic_query_formatter import TrafficQueryFormatter
-from illumio.parsers.traffic_flow_parser import TrafficFlowParser
-from illumio.parsers.rule_parser import RuleParser
-from illumio.converters.rule_converter import RuleConverter
 
 from .common import (
     initialize_analyzer,
@@ -263,60 +259,39 @@ def analyze_excel_flows(file_path: str, perform_deep_analysis: bool = False) -> 
 
 def export_excel_results(results: List[Dict[str, Any]], base_filename: str, analyzer: Any) -> None:
     """
-    Exporte les résultats d'analyse Excel au format CSV, JSON et Excel (avec feuille de règles).
+    Exporte les résultats d'analyse Excel au format Excel avec feuille de règles.
     
     Args:
         results: Liste des résultats d'analyse
-        base_filename: Nom de base pour les fichiers d'export
+        base_filename: Nom de base pour le fichier d'export
         analyzer: Instance d'IllumioTrafficAnalyzer pour utiliser son export_handler
     """
     try:
         # Obtenir le répertoire de sortie
         output_dir = get_output_dir()
         
-        # Créer les chemins complets pour les fichiers d'export
-        csv_file = os.path.join(output_dir, f"{base_filename}.csv")
-        json_file = os.path.join(output_dir, f"{base_filename}.json")
+        # Créer le chemin complet pour le fichier Excel
         excel_file = os.path.join(output_dir, f"{base_filename}.xlsx")
         
-        # Exporter en CSV
-        try:
-            print(f"\nExport des résultats au format CSV: {csv_file}")
-            analyzer.export_handler.export_flows(results, csv_file, format_type='csv')
-            print(f"✅ Export CSV terminé.")
-        except Exception as e:
-            print(f"❌ Erreur lors de l'export CSV: {e}")
-        
-        # Exporter en JSON
-        try:
-            print(f"Export des résultats au format JSON: {json_file}")
-            analyzer.export_handler.export_flows(results, json_file, format_type='json')
-            print(f"✅ Export JSON terminé.")
-        except Exception as e:
-            print(f"❌ Erreur lors de l'export JSON: {e}")
-        
         # Exporter en Excel avec feuille de règles
-        try:
-            print(f"Export des résultats au format Excel avec détails des règles: {excel_file}")
-            
-            # Extraire les hrefs des règles
-            rule_hrefs = analyzer.export_handler.extract_rule_hrefs(results)
-            # Récupérer les détails des règles
-            rule_details = analyzer.export_handler.get_rule_details(rule_hrefs)
-            
-            # Utiliser la méthode d'export Excel avec les détails de règles
-            success = analyzer.export_handler._export_to_excel(results, excel_file, rule_details)
-            
-            if success:
-                print(f"✅ Export Excel terminé.")
-            else:
-                print(f"❌ Erreur lors de l'export Excel.")
-                
-        except Exception as e:
-            print(f"❌ Erreur lors de l'export Excel: {e}")
-            import traceback
-            traceback.print_exc()
+        print(f"\nExport des résultats au format Excel avec détails des règles: {excel_file}")
         
-        print(f"\nTous les exports ont été enregistrés dans le dossier: {output_dir}")
+        # Extraire tous les hrefs uniques des règles
+        rule_hrefs = analyzer.export_handler.extract_rule_hrefs(results)
+        
+        # Récupérer les détails complets des règles, y compris les objets associés
+        rule_details = analyzer.export_handler.get_detailed_rules(rule_hrefs)
+        
+        # Utiliser la méthode d'export Excel avec les détails de règles
+        success = analyzer.export_handler._export_to_excel(results, excel_file, rule_details)
+        
+        if success:
+            print(f"✅ Export Excel terminé avec feuille détaillant les {len(rule_details)} règles.")
+            print(f"   Fichier sauvegardé: {excel_file}")
+        else:
+            print(f"❌ Erreur lors de l'export Excel.")
+            
     except Exception as e:
-        print(f"❌ Erreur générale lors de l'export des résultats: {e}")
+        print(f"❌ Erreur lors de l'export Excel: {e}")
+        import traceback
+        traceback.print_exc()
