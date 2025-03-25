@@ -226,9 +226,33 @@ class TrafficFlowParser:
         
         # Si les données sont un dictionnaire valide
         if isinstance(service_data, dict):
+            # Récupérer le nom directement
             result['name'] = service_data.get('name')
-            result['port'] = service_data.get('port')
-            result['proto'] = service_data.get('proto')
+            
+            # Vérifier si port et proto sont directement au niveau racine
+            direct_port = service_data.get('port')
+            direct_proto = service_data.get('proto')
+            
+            if direct_port is not None:
+                result['port'] = direct_port
+            if direct_proto is not None:
+                result['proto'] = direct_proto
+            
+            # Vérifier si service_ports existe et contient des informations
+            service_ports = service_data.get('service_ports', [])
+            if service_ports and isinstance(service_ports, list) and len(service_ports) > 0:
+                first_port = service_ports[0]
+                if isinstance(first_port, dict):
+                    # N'écraser les valeurs que si elles sont encore None
+                    if result['port'] is None:
+                        result['port'] = first_port.get('port')
+                    if result['proto'] is None:
+                        result['proto'] = first_port.get('proto')
+            
+            # Extraire aussi l'ID du service si disponible via href
+            if 'href' in service_data:
+                service_id = ApiResponseParser.extract_id_from_href(service_data['href'])
+                result['service_id'] = service_id
         elif isinstance(service_data, str):
             # Si c'est une chaîne, l'utiliser comme nom
             result['name'] = service_data

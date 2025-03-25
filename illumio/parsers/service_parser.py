@@ -220,24 +220,38 @@ class ServiceParser:
             conn, cursor = db.connect()
             
             cursor.execute('''
-            SELECT name, description FROM services WHERE id = ?
+            SELECT * FROM services WHERE id = ?
             ''', (service_id,))
             
             row = cursor.fetchone()
+            
+            if not row:
+                return {}
+                
+            service_data = dict(row)
+            
+            # Récupérer les ports du service
+            cursor.execute('''
+            SELECT * FROM service_ports WHERE service_id = ?
+            ''', (service_id,))
+            
+            service_ports = []
+            for port_row in cursor.fetchall():
+                port_data = dict(port_row)
+                service_ports.append({
+                    'proto': port_data.get('protocol'),
+                    'port': port_data.get('port'),
+                    'to_port': port_data.get('to_port')
+                })
+            
+            # Ajouter les ports au service
+            service_data['service_ports'] = service_ports
+            
             db.close(conn)
             
-            if row:
-                service_data = {
-                    'id': service_id,
-                    'name': row['name'],
-                    'description': row.get('description')
-                }
+            # Normaliser les données avec le parseur
+            return ServiceParser.parse_service(service_data)
                 
-                # Normaliser les données avec le parseur
-                return ServiceParser.parse_service(service_data)
-                
-            return {}
-            
         except Exception as e:
             print(f"Erreur lors de la récupération du service {service_id}: {e}")
             return {}
