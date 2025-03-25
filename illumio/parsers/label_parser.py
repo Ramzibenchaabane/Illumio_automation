@@ -125,3 +125,72 @@ class LabelParser:
             normalized_dimensions.append(normalized_dimension)
         
         return normalized_dimensions
+    
+    @staticmethod
+    def get_label_info_from_database(db, label_id: str) -> Dict[str, Any]:
+        """
+        Récupère les informations d'un label depuis la base de données.
+        Cette méthode facilite l'intégration avec _get_entity_details dans export_handler.py.
+        
+        Args:
+            db: Instance de la base de données
+            label_id: ID du label
+            
+        Returns:
+            dict: Informations du label avec 'key' et 'value'
+        """
+        if not label_id or not db:
+            return {}
+            
+        try:
+            # Récupérer le label depuis la base de données
+            conn, cursor = db.connect()
+            
+            cursor.execute('''
+            SELECT key, value FROM labels WHERE id = ?
+            ''', (label_id,))
+            
+            row = cursor.fetchone()
+            db.close(conn)
+            
+            if row:
+                label_data = {
+                    'id': label_id,
+                    'key': row['key'],
+                    'value': row['value']
+                }
+                
+                # Normaliser les données avec le parseur
+                return LabelParser.parse_label(label_data)
+                
+            return {}
+            
+        except Exception as e:
+            print(f"Erreur lors de la récupération du label {label_id}: {e}")
+            return {}
+    
+    @staticmethod
+    def format_label_for_display(label: Dict[str, Any]) -> str:
+        """
+        Formate un label pour l'affichage.
+        
+        Args:
+            label: Données du label
+            
+        Returns:
+            str: Représentation formatée du label
+        """
+        if not label:
+            return "Label inconnu"
+            
+        key = label.get('key')
+        value = label.get('value')
+        
+        if key and value:
+            return f"{key}:{value}"
+        elif key:
+            return f"{key}"
+        elif value:
+            return f"{value}"
+        else:
+            return "Label sans clé/valeur"

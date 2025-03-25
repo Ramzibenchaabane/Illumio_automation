@@ -198,3 +198,155 @@ class ServiceParser:
                 continue
         
         return matching_services
+    
+    @staticmethod
+    def get_service_info_from_database(db, service_id: str) -> Dict[str, Any]:
+        """
+        Récupère les informations d'un service depuis la base de données.
+        Cette méthode facilite l'intégration avec _get_entity_details dans export_handler.py.
+        
+        Args:
+            db: Instance de la base de données
+            service_id: ID du service
+            
+        Returns:
+            dict: Informations du service ou dictionnaire vide si non trouvé
+        """
+        if not service_id or not db:
+            return {}
+            
+        try:
+            # Récupérer le service depuis la base de données
+            conn, cursor = db.connect()
+            
+            cursor.execute('''
+            SELECT name, description FROM services WHERE id = ?
+            ''', (service_id,))
+            
+            row = cursor.fetchone()
+            db.close(conn)
+            
+            if row:
+                service_data = {
+                    'id': service_id,
+                    'name': row['name'],
+                    'description': row.get('description')
+                }
+                
+                # Normaliser les données avec le parseur
+                return ServiceParser.parse_service(service_data)
+                
+            return {}
+            
+        except Exception as e:
+            print(f"Erreur lors de la récupération du service {service_id}: {e}")
+            return {}
+    
+    @staticmethod
+    def get_service_display_name(service: Optional[Union[Dict[str, Any], str]]) -> str:
+        """
+        Retourne un nom d'affichage pour un service.
+        
+        Args:
+            service: Données du service ou ID
+            
+        Returns:
+            str: Nom d'affichage du service
+        """
+        if not service:
+            return "N/A"
+            
+        if isinstance(service, dict):
+            # Préférer le nom sur l'ID
+            if service.get('name'):
+                return service['name']
+            elif service.get('id'):
+                return f"Service {service['id']}"
+            else:
+                # Si on a des ports, les formater
+                ports = service.get('service_ports', [])
+                if ports and isinstance(ports, list) and len(ports) > 0:
+                    port_info = ports[0]
+                    proto = port_info.get('proto')
+                    port = port_info.get('port')
+                    to_port = port_info.get('to_port')
+                    
+                    proto_name = "TCP" if proto == 6 else "UDP" if proto == 17 else f"Proto {proto}"
+                    
+                    if port and to_port and port != to_port:
+                        return f"{proto_name}: {port}-{to_port}"
+                    elif port:
+                        return f"{proto_name}: {port}"
+                    else:
+                        return proto_name
+                
+                return "Service inconnu"
+        else:
+            # Si c'est juste une chaîne, la retourner comme ID
+            return f"Service {service}"
+    
+    @staticmethod
+    def format_service_for_display(service: Optional[Union[Dict[str, Any], str]]) -> str:
+        """
+        Formate un service pour l'affichage, avec des informations détaillées si disponibles.
+        
+        Args:
+            service: Données du service ou ID
+            
+        Returns:
+            str: Représentation formatée du service
+        """
+        if not service:
+            return "N/A"
+            
+        if isinstance(service, dict):
+            service_name = ServiceParser.get_service_display_name(service)
+            
+            # Ajouter des détails sur les ports si disponibles
+            ports = service.get('service_ports', [])
+            if ports and isinstance(ports, list) and len(ports) > 0:
+                port_descriptions = []
+                
+                for port_info in ports:
+                    proto = port_info.get('proto')
+                    port = port_info.get('port')
+                    to_port = port_info.get('to_port')
+                    
+                    proto_name = "TCP" if proto == 6 else "UDP" if proto == 17 else f"Proto {proto}"
+                    
+                    if port and to_port and port != to_port:
+                        port_descriptions.append(f"{proto_name}: {port}-{to_port}")
+                    elif port:
+                        port_descriptions.append(f"{proto_name}: {port}")
+                    else:
+                        port_descriptions.append(proto_name)
+                
+                if port_descriptions:
+                    return f"{service_name} ({', '.join(port_descriptions)})"
+            
+            return service_name
+        else:
+            # Si c'est juste une chaîne, la retourner comme ID
+            return f"Service {service}"
+    
+    @staticmethod
+    def protocol_to_name(proto: Optional[int]) -> str:
+        """
+        Convertit un numéro de protocole en nom de protocole.
+        
+        Args:
+            proto: Numéro de protocole
+            
+        Returns:
+            str: Nom du protocole ou le numéro original comme chaîne
+        """
+        if proto is None:
+            return "N/A"
+            
+        protocol_map = {
+            1: "ICMP",
+            6: "TCP",
+            17: "UDP"
+        }
+        
+        return protocol_map.get(proto, str(proto))

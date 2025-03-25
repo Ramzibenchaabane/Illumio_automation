@@ -5,7 +5,7 @@ Handles exporting traffic analysis results to various formats.
 import os
 import json
 import time
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple, Union
 from datetime import datetime
 import pandas as pd
 
@@ -20,6 +20,8 @@ from ..parsers.label_parser import LabelParser
 from ..parsers.workload_parser import WorkloadParser
 from ..parsers.ip_list_parser import IPListParser
 from ..parsers.service_parser import ServiceParser
+# Import du nouveau parser pour les groupes de labels
+from ..parsers.label_group_parser import LabelGroupParser
 
 # Importation des convertisseurs
 from ..converters.traffic_flow_converter import TrafficFlowConverter
@@ -125,9 +127,13 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             # Create a DataFrame for the flows
             flow_rows = []
             for flow in flows:
-                # Get detailed workload information for source and destination
-                src_workload_name = self._get_workload_hostname(flow.get('src_workload_id'))
-                dst_workload_name = self._get_workload_hostname(flow.get('dst_workload_id'))
+                # Get detailed workload information for source and destination using our unified method
+                src_workload_info = self._get_entity_details('workload', flow.get('src_workload_id'))
+                dst_workload_info = self._get_entity_details('workload', flow.get('dst_workload_id'))
+                
+                # Get display names using the workload parser
+                src_workload_name = WorkloadParser.get_workload_display_name(src_workload_info)
+                dst_workload_name = WorkloadParser.get_workload_display_name(dst_workload_info)
                 
                 flow_row = {
                     'Source IP': flow.get('src_ip'),
@@ -136,7 +142,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                     'Destination Workload': dst_workload_name,
                     'Service': flow.get('service_name'),
                     'Port': flow.get('service_port'),
-                    'Protocol': self._protocol_to_name(flow.get('service_protocol')),
+                    'Protocol': ServiceParser.protocol_to_name(flow.get('service_protocol')),
                     'Décision': flow.get('policy_decision'),
                     'Direction': flow.get('flow_direction'),
                     'Connexions': flow.get('num_connections'),
@@ -152,7 +158,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                     flow_row.update({
                         'Source Excel IP': meta.get('source_ip'),
                         'Destination Excel IP': meta.get('dest_ip'),
-                        'Excel Protocol': self._protocol_to_name(meta.get('protocol')),
+                        'Excel Protocol': ServiceParser.protocol_to_name(meta.get('protocol')),
                         'Excel Port': meta.get('port'),
                         'Excel Row': meta.get('excel_row')
                     })
@@ -337,11 +343,13 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                     label_id = label_href.split('/')[-1] if label_href else None
                     
                     if label_id:
-                        # Rechercher le label dans la base de données
-                        label_info = self._get_label_info(label_id)
-                        if label_info and label_info.get('key') and label_info.get('value'):
-                            actor_descriptions.append(f"Label: {label_info['key']}:{label_info['value']}")
-                            continue
+                        # Récupérer les informations du label via la méthode unifiée
+                        label_info = self._get_entity_details('label', label_id)
+                        
+                        # Utiliser le parseur pour formater l'affichage
+                        display_text = LabelParser.format_label_for_display(label_info)
+                        actor_descriptions.append(f"Label: {display_text}")
+                        continue
                 
                 # Si on n'a pas pu récupérer les informations du label, utiliser une valeur de secours
                 actor_descriptions.append(f"Label: {value or 'Non spécifié'}")
@@ -352,9 +360,19 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 if name:
                     actor_descriptions.append(f"Groupe: {name}")
                 else:
-                    # Fallback: Get label group from database
-                    label_group_name = self._get_label_group_name(value)
-                    actor_descriptions.append(f"Groupe: {label_group_name}")
+                    # Extraire l'ID à partir du href ou utiliser la valeur directe
+                    label_group_id = None
+                    if 'href' in actor:
+                        label_group_id = actor['href'].split('/')[-1]
+                    else:
+                        label_group_id = value
+                    
+                    # Récupérer les informations du groupe de labels via la méthode unifiée
+                    label_group_info = self._get_entity_details('label_group', label_group_id)
+                    
+                    # Utiliser le parseur pour formater l'affichage
+                    display_text = LabelGroupParser.get_label_group_display_name(label_group_info)
+                    actor_descriptions.append(f"Groupe: {display_text}")
             
             elif actor_type == 'workload':
                 # Récupérer le hostname directement depuis l'acteur
@@ -362,9 +380,19 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 if hostname:
                     actor_descriptions.append(f"Workload: {hostname}")
                 else:
-                    # Fallback: Get workload hostname
-                    workload_hostname = self._get_workload_hostname_from_value(value)
-                    actor_descriptions.append(f"Workload: {workload_hostname}")
+                    # Extraire l'ID à partir du href ou utiliser la valeur directe
+                    workload_id = None
+                    if 'href' in actor:
+                        workload_id = actor['href'].split('/')[-1]
+                    else:
+                        workload_id = value
+                    
+                    # Récupérer les informations du workload via la méthode unifiée
+                    workload_info = self._get_entity_details('workload', workload_id)
+                    
+                    # Utiliser le parseur pour formater l'affichage
+                    display_text = WorkloadParser.get_workload_display_name(workload_info)
+                    actor_descriptions.append(f"Workload: {display_text}")
             
             elif actor_type == 'ip_list':
                 # Récupérer le nom directement depuis l'acteur
@@ -372,9 +400,19 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 if name:
                     actor_descriptions.append(f"IP List: {name}")
                 else:
-                    # Fallback: Get IP list name
-                    ip_list_name = self._get_ip_list_name(value)
-                    actor_descriptions.append(f"IP List: {ip_list_name}")
+                    # Extraire l'ID à partir du href ou utiliser la valeur directe
+                    ip_list_id = None
+                    if 'href' in actor:
+                        ip_list_id = actor['href'].split('/')[-1]
+                    else:
+                        ip_list_id = value
+                    
+                    # Récupérer les informations de la liste d'IP via la méthode unifiée
+                    ip_list_info = self._get_entity_details('ip_list', ip_list_id)
+                    
+                    # Utiliser le parseur pour formater l'affichage
+                    display_text = IPListParser.get_ip_list_display_name(ip_list_info)
+                    actor_descriptions.append(f"IP List: {display_text}")
             
             elif actor_type == 'ams':
                 actor_descriptions.append("Tous les systèmes gérés")
@@ -383,43 +421,48 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 actor_descriptions.append(f"{actor_type}: {value}")
         
         return " | ".join(actor_descriptions) if actor_descriptions else "Aucun"
-        
-    def _get_label_info(self, label_id: str) -> Dict[str, str]:
+    
+    def _get_entity_details(self, entity_type: str, entity_id: Optional[str]) -> Union[Dict[str, Any], str, None]:
         """
-        Récupère les informations d'un label depuis la base de données.
+        Récupère les détails d'une entité en fonction de son type et de son ID.
+        Utilise les parseurs appropriés pour normaliser les données.
         
         Args:
-            label_id (str): ID du label
+            entity_type (str): Type d'entité ('label', 'workload', 'service', 'ip_list', 'label_group')
+            entity_id (str): ID de l'entité
             
         Returns:
-            dict: Information du label avec 'key' et 'value'
+            Union[Dict[str, Any], str, None]: Détails de l'entité ou valeur par défaut
         """
-        if not label_id:
-            return {}
-            
+        if not entity_id:
+            return "N/A" if entity_type == 'workload' else None
+        
         try:
-            # Récupérer le label depuis la base de données
-            conn, cursor = self.db.connect()
-            
-            cursor.execute('''
-            SELECT key, value FROM labels WHERE id = ?
-            ''', (label_id,))
-            
-            row = cursor.fetchone()
-            self.db.close(conn)
-            
-            if row:
-                return {
-                    'key': row['key'],
-                    'value': row['value']
-                }
+            # Utiliser le parseur approprié en fonction du type d'entité
+            if entity_type == 'label':
+                return LabelParser.get_label_info_from_database(self.db, entity_id)
                 
-            return {}
+            elif entity_type == 'workload':
+                return WorkloadParser.get_workload_info_from_database(self.db, entity_id)
+                
+            elif entity_type == 'service':
+                return ServiceParser.get_service_info_from_database(self.db, entity_id)
+                
+            elif entity_type == 'ip_list':
+                return IPListParser.get_ip_list_info_from_database(self.db, entity_id)
+                
+            elif entity_type == 'label_group':
+                return LabelGroupParser.get_label_group_info_from_database(self.db, entity_id)
+            
+            # Type d'entité non pris en charge
+            return None
             
         except Exception as e:
-            print(f"Erreur lors de la récupération du label {label_id}: {e}")
-            return {}
-    
+            print(f"Erreur lors de la récupération de l'entité {entity_type} {entity_id}: {e}")
+            if entity_type == 'workload':
+                return entity_id
+            return None
+        
     def _format_services(self, services: List[Dict[str, Any]]) -> str:
         """
         Format service objects to display names and port information.
@@ -438,14 +481,22 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             service_type = service.get('type')
             
             if service_type == 'service':
-                # Get service name from database or use fallback
-                service_name = self._get_service_name(service.get('id')) or service.get('name', service.get('id', 'N/A'))
-                service_descriptions.append(f"Service: {service_name}")
+                # Extraire l'ID du service
+                service_id = service.get('id')
+                if not service_id and 'href' in service:
+                    service_id = service['href'].split('/')[-1]
+                
+                # Récupérer les informations du service via la méthode unifiée
+                service_info = self._get_entity_details('service', service_id)
+                
+                # Utiliser le parseur pour formater l'affichage
+                display_text = ServiceParser.get_service_display_name(service_info)
+                service_descriptions.append(f"Service: {display_text}")
                 
             elif service_type == 'proto':
                 # Format protocol and port
                 proto = service.get('proto')
-                proto_name = self._protocol_to_name(proto)
+                proto_name = ServiceParser.protocol_to_name(proto)
                 port = service.get('port')
                 to_port = service.get('to_port')
                 
@@ -461,190 +512,6 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 service_descriptions.append(str(service))
                 
         return " | ".join(service_descriptions) if service_descriptions else "Aucun"
-    
-    def _protocol_to_name(self, proto: Optional[int]) -> str:
-        """
-        Convert protocol number to protocol name.
-        
-        Args:
-            proto (int): Protocol number
-            
-        Returns:
-            Protocol name or the original number as string
-        """
-        if proto is None:
-            return "N/A"
-            
-        protocol_map = {
-            1: "ICMP",
-            6: "TCP",
-            17: "UDP"
-        }
-        
-        return protocol_map.get(proto, str(proto))
-    
-    def _get_workload_hostname(self, workload_id: Optional[str]) -> str:
-        """
-        Get workload hostname from workload ID.
-        
-        Args:
-            workload_id (str): Workload ID
-            
-        Returns:
-            Workload hostname or ID if not found
-        """
-        if not workload_id:
-            return "N/A"
-            
-        try:
-            # Try to get workload from database
-            conn, cursor = self.db.connect()
-            
-            cursor.execute('''
-            SELECT hostname, name FROM workloads WHERE id = ?
-            ''', (workload_id,))
-            
-            row = cursor.fetchone()
-            self.db.close(conn)
-            
-            if row:
-                # Prefer hostname over name
-                if row['hostname']:
-                    return row['hostname']
-                elif row['name']:
-                    return row['name']
-                
-            return workload_id
-            
-        except Exception as e:
-            print(f"Erreur lors de la récupération du workload {workload_id}: {e}")
-            return workload_id
-
-    def _get_workload_hostname_from_value(self, value: str) -> str:
-        """
-        Get workload hostname from value which might be href or ID.
-        
-        Args:
-            value (str): Workload value from actor (href or ID)
-            
-        Returns:
-            Workload hostname or original value if not found
-        """
-        # Extract ID from href if necessary
-        workload_id = value
-        if '/' in value:
-            workload_id = value.split('/')[-1]
-            
-        return self._get_workload_hostname(workload_id)
-    
-    def _get_label_group_name(self, value: str) -> str:
-        """
-        Get label group name from value which might be href or ID.
-        
-        Args:
-            value (str): Label group value from actor (href or ID)
-            
-        Returns:
-            Label group name or original value if not found
-        """
-        if not value:
-            return "N/A"
-            
-        # Extract ID from href if necessary
-        label_group_id = value
-        if '/' in value:
-            label_group_id = value.split('/')[-1]
-            
-        try:
-            # Try to get label group from database
-            conn, cursor = self.db.connect()
-            
-            cursor.execute('''
-            SELECT name FROM label_groups WHERE id = ?
-            ''', (label_group_id,))
-            
-            row = cursor.fetchone()
-            self.db.close(conn)
-            
-            if row and row['name']:
-                return row['name']
-                
-            return value
-            
-        except Exception as e:
-            print(f"Erreur lors de la récupération du groupe de labels {label_group_id}: {e}")
-            return value
-    
-    def _get_ip_list_name(self, value: str) -> str:
-        """
-        Get IP list name from value which might be href or ID.
-        
-        Args:
-            value (str): IP List value from actor (href or ID)
-            
-        Returns:
-            IP list name or original value if not found
-        """
-        if not value:
-            return "N/A"
-            
-        # Extract ID from href if necessary
-        ip_list_id = value
-        if '/' in value:
-            ip_list_id = value.split('/')[-1]
-            
-        try:
-            # Try to get IP list from database
-            conn, cursor = self.db.connect()
-            
-            cursor.execute('''
-            SELECT name FROM ip_lists WHERE id = ?
-            ''', (ip_list_id,))
-            
-            row = cursor.fetchone()
-            self.db.close(conn)
-            
-            if row and row['name']:
-                return row['name']
-                
-            return value
-            
-        except Exception as e:
-            print(f"Erreur lors de la récupération de l'IP list {ip_list_id}: {e}")
-            return value
-    
-    def _get_service_name(self, service_id: Optional[str]) -> Optional[str]:
-        """
-        Get service name from service ID.
-        
-        Args:
-            service_id (str): Service ID
-            
-        Returns:
-            Service name or None if not found
-        """
-        if not service_id:
-            return None
-            
-        try:
-            # Try to get service from database
-            conn, cursor = self.db.connect()
-            
-            cursor.execute('''
-            SELECT name FROM services WHERE id = ?
-            ''', (service_id,))
-            
-            row = cursor.fetchone()
-            self.db.close(conn)
-            
-            if row and row['name']:
-                return row['name']
-                
-            return None
-            
-        except Exception as e:
-            print(f"Erreur lors de la récupération du service {service_id}: {e}")
-            return None
     
     def extract_rule_hrefs(self, flows: List[Dict[str, Any]]) -> List[str]:
         """

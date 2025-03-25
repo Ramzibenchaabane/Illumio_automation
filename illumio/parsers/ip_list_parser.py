@@ -231,3 +231,116 @@ class IPListParser:
         except Exception:
             # En cas d'erreur, considérer que l'IP n'est pas dans la liste
             return False
+    
+    @staticmethod
+    def get_ip_list_info_from_database(db, ip_list_id: str) -> Dict[str, Any]:
+        """
+        Récupère les informations d'une liste d'IPs depuis la base de données.
+        Cette méthode facilite l'intégration avec _get_entity_details dans export_handler.py.
+        
+        Args:
+            db: Instance de la base de données
+            ip_list_id: ID de la liste d'IPs
+            
+        Returns:
+            dict: Informations de la liste d'IPs ou dictionnaire vide si non trouvée
+        """
+        if not ip_list_id or not db:
+            return {}
+            
+        try:
+            # Récupérer la liste d'IPs depuis la base de données
+            conn, cursor = db.connect()
+            
+            cursor.execute('''
+            SELECT name, description FROM ip_lists WHERE id = ?
+            ''', (ip_list_id,))
+            
+            row = cursor.fetchone()
+            db.close(conn)
+            
+            if row:
+                ip_list_data = {
+                    'id': ip_list_id,
+                    'name': row['name'],
+                    'description': row.get('description')
+                }
+                
+                # Normaliser les données avec le parseur
+                return IPListParser.parse_ip_list(ip_list_data)
+                
+            return {}
+            
+        except Exception as e:
+            print(f"Erreur lors de la récupération de la liste d'IPs {ip_list_id}: {e}")
+            return {}
+    
+    @staticmethod
+    def get_ip_list_display_name(ip_list: Optional[Union[Dict[str, Any], str]]) -> str:
+        """
+        Retourne un nom d'affichage pour une liste d'IPs.
+        
+        Args:
+            ip_list: Données de la liste d'IPs ou ID
+            
+        Returns:
+            str: Nom d'affichage de la liste d'IPs
+        """
+        if not ip_list:
+            return "N/A"
+            
+        if isinstance(ip_list, dict):
+            # Préférer le nom sur l'ID
+            if ip_list.get('name'):
+                return ip_list['name']
+            elif ip_list.get('id'):
+                return f"IP List {ip_list['id']}"
+            else:
+                return "Liste d'IPs inconnue"
+        else:
+            # Si c'est juste une chaîne, la retourner comme ID
+            return f"IP List {ip_list}"
+    
+    @staticmethod
+    def format_ip_list_for_display(ip_list: Optional[Union[Dict[str, Any], str]]) -> str:
+        """
+        Formate une liste d'IPs pour l'affichage, avec des informations détaillées si disponibles.
+        
+        Args:
+            ip_list: Données de la liste d'IPs ou ID
+            
+        Returns:
+            str: Représentation formatée de la liste d'IPs
+        """
+        if not ip_list:
+            return "N/A"
+            
+        if isinstance(ip_list, dict):
+            ip_list_name = IPListParser.get_ip_list_display_name(ip_list)
+            
+            # Ajouter des détails sur les plages si disponibles
+            ip_ranges = ip_list.get('ip_ranges', [])
+            if ip_ranges and isinstance(ip_ranges, list) and len(ip_ranges) > 0:
+                # Limiter le nombre de plages à afficher pour ne pas surcharger
+                max_ranges_to_show = 3
+                
+                range_descriptions = []
+                for i, ip_range in enumerate(ip_ranges[:max_ranges_to_show]):
+                    from_ip = ip_range.get('from_ip')
+                    to_ip = ip_range.get('to_ip')
+                    
+                    if from_ip == to_ip or not to_ip:
+                        range_descriptions.append(from_ip)
+                    else:
+                        range_descriptions.append(f"{from_ip} - {to_ip}")
+                
+                if len(ip_ranges) > max_ranges_to_show:
+                    range_descriptions.append(f"... et {len(ip_ranges) - max_ranges_to_show} autres plages")
+                
+                if range_descriptions:
+                    return f"{ip_list_name} ({', '.join(range_descriptions)})"
+            
+            return ip_list_name
+        else:
+            # Si c'est juste une chaîne, la retourner comme ID
+            return f"IP List {ip_list}"

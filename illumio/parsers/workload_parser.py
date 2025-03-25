@@ -190,3 +190,74 @@ class WorkloadParser:
             normalized_labels.append(normalized_label)
         
         return normalized_labels
+    
+    @staticmethod
+    def get_workload_info_from_database(db, workload_id: str) -> Dict[str, Any]:
+        """
+        Récupère les informations d'un workload depuis la base de données.
+        Cette méthode facilite l'intégration avec _get_entity_details dans export_handler.py.
+        
+        Args:
+            db: Instance de la base de données
+            workload_id: ID du workload
+            
+        Returns:
+            dict: Informations du workload ou None si non trouvé
+        """
+        if not workload_id or not db:
+            return {}
+            
+        try:
+            # Récupérer le workload depuis la base de données
+            conn, cursor = db.connect()
+            
+            cursor.execute('''
+            SELECT hostname, name FROM workloads WHERE id = ?
+            ''', (workload_id,))
+            
+            row = cursor.fetchone()
+            db.close(conn)
+            
+            if row:
+                workload_data = {
+                    'id': workload_id,
+                    'hostname': row['hostname'],
+                    'name': row['name']
+                }
+                
+                # Normaliser les données avec le parseur
+                return WorkloadParser.parse_workload(workload_data)
+                
+            return {}
+            
+        except Exception as e:
+            print(f"Erreur lors de la récupération du workload {workload_id}: {e}")
+            return {}
+    
+    @staticmethod
+    def get_workload_display_name(workload: Optional[Union[Dict[str, Any], str]]) -> str:
+        """
+        Retourne un nom d'affichage pour un workload.
+        
+        Args:
+            workload: Données du workload ou ID
+            
+        Returns:
+            str: Nom d'affichage du workload
+        """
+        if not workload:
+            return "N/A"
+            
+        if isinstance(workload, dict):
+            # Préférer le hostname sur le name
+            if workload.get('hostname'):
+                return workload['hostname']
+            elif workload.get('name'):
+                return workload['name']
+            elif workload.get('id'):
+                return workload['id']
+            else:
+                return "Workload inconnu"
+        else:
+            # Si c'est juste une chaîne, la retourner comme ID
+            return str(workload)
