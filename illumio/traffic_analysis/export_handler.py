@@ -279,9 +279,9 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             label_descriptions = []
             for label in scope_group:
                 key = label.get('key', '')
-                value = label.get('value', '')
+                value = label.get('value', '')  # S'assurer de récupérer la valeur correctement
                 
-                if key and value:
+                if key:  # On vérifie key seulement pour permettre des valeurs vides
                     if label.get('exclusion'):
                         label_descriptions.append(f"NON {key}:{value}")
                     else:

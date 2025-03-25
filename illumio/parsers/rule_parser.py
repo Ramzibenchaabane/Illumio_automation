@@ -197,12 +197,12 @@ class RuleParser:
                     value = label.get('value')
                     href = label.get('href')
                     
-                    if key and value:
+                    if key:  # S'assurer que key existe avant de créer un élément
                         scope_labels.append({
                             'type': 'label',
                             'key': key,
-                            'value': value,
-                            'display': f"{key}:{value}",
+                            'value': value,  # S'assurer que cette valeur est préservée
+                            'display': f"{key}:{value}" if value else key,
                             'href': href,
                             'exclusion': scope_item.get('exclusion', False)
                         })
