@@ -38,6 +38,9 @@ class RuleConverter:
         
         # Extraire le nom de la règle
         name = rule.get('name', '')
+        
+        # S'assurer que raw_data contient les scopes si présents
+        raw_data = rule.copy() if isinstance(rule, dict) else rule
             
         # Créer une base pour l'entité de base de données
         db_rule = {
@@ -48,7 +51,7 @@ class RuleConverter:
             'resolve_labels_as': json.dumps(rule['resolve_labels_as']) if isinstance(rule.get('resolve_labels_as'), dict) else rule.get('resolve_labels_as'),
             'sec_connect': 1 if rule.get('sec_connect') else 0,
             'unscoped_consumers': 1 if rule.get('unscoped_consumers') else 0,
-            'raw_data': json.dumps(rule) if isinstance(rule, dict) else rule
+            'raw_data': json.dumps(raw_data) if isinstance(raw_data, dict) else raw_data
         }
         
         # Ajouter l'ID du rule set si fourni
@@ -62,10 +65,6 @@ class RuleConverter:
         for field in list_fields:
             if field in rule:
                 db_rule[field] = json.dumps(rule[field])
-        
-        # Si le rule contient des scopes, les enregistrer également
-        if 'scopes' in rule:
-            db_rule['scopes'] = json.dumps(rule['scopes'])
         
         return db_rule
     
@@ -119,15 +118,18 @@ class RuleConverter:
                 else:
                     normalized_rule[field] = rule[field]
         
-        # Traiter les scopes qui peuvent être du JSON
-        if 'scopes' in rule:
-            if isinstance(rule['scopes'], str):
+        # Extraire les scopes depuis raw_data si présent
+        if 'raw_data' in rule:
+            raw_data = rule['raw_data']
+            if isinstance(raw_data, str):
                 try:
-                    normalized_rule['scopes'] = json.loads(rule['scopes'])
+                    parsed_data = json.loads(raw_data)
+                    if isinstance(parsed_data, dict) and 'scopes' in parsed_data:
+                        normalized_rule['scopes'] = parsed_data['scopes']
                 except json.JSONDecodeError:
-                    normalized_rule['scopes'] = []
-            else:
-                normalized_rule['scopes'] = rule['scopes']
+                    pass
+            elif isinstance(raw_data, dict) and 'scopes' in raw_data:
+                normalized_rule['scopes'] = raw_data['scopes']
         
         # Reconstruire le href si nécessaire
         if 'rule_set_id' in normalized_rule and 'id' in normalized_rule:
@@ -158,6 +160,9 @@ class RuleConverter:
             href = rule_set['href']
             rule_set_id = href.split('/')[-1] if href else None
         
+        # S'assurer que raw_data contient les scopes si présents
+        raw_data = rule_set.copy() if isinstance(rule_set, dict) else rule_set
+        
         # Créer une base pour l'entité de base de données
         db_rule_set = {
             'id': rule_set_id,
@@ -165,12 +170,8 @@ class RuleConverter:
             'description': rule_set.get('description'),
             'enabled': 1 if rule_set.get('enabled') else 0,
             'pversion': rule_set.get('pversion', 'draft'),
-            'raw_data': json.dumps(rule_set) if isinstance(rule_set, dict) else rule_set
+            'raw_data': json.dumps(raw_data) if isinstance(raw_data, dict) else raw_data
         }
-        
-        # Enregistrer explicitement les scopes s'ils sont présents
-        if 'scopes' in rule_set:
-            db_rule_set['scopes'] = json.dumps(rule_set['scopes'])
         
         return db_rule_set
     
@@ -200,18 +201,8 @@ class RuleConverter:
             'pversion': rule_set.get('pversion', 'draft')
         }
         
-        # Traiter les scopes qui peuvent être du JSON
-        if 'scopes' in rule_set:
-            if isinstance(rule_set['scopes'], str):
-                try:
-                    normalized_rule_set['scopes'] = json.loads(rule_set['scopes'])
-                except json.JSONDecodeError:
-                    normalized_rule_set['scopes'] = []
-            else:
-                normalized_rule_set['scopes'] = rule_set['scopes']
-        
-        # Extraire les scopes depuis raw_data si non trouvés ailleurs
-        if 'scopes' not in normalized_rule_set and 'raw_data' in rule_set:
+        # Extraire les scopes depuis raw_data si présent
+        if 'raw_data' in rule_set:
             raw_data = rule_set['raw_data']
             if isinstance(raw_data, str):
                 try:
@@ -262,9 +253,13 @@ class RuleConverter:
                     rule_with_parent = rule.copy()
                     rule_with_parent['rule_set_id'] = rule_set_id
                     
-                    # Si le rule_set a des scopes, les ajouter également
+                    # Si le rule_set a des scopes, les ajouter également à raw_data
                     if 'scopes' in rule_set:
-                        rule_with_parent['scopes'] = rule_set['scopes']
+                        if 'raw_data' not in rule_with_parent:
+                            rule_with_parent['raw_data'] = rule.copy()
+                        elif isinstance(rule_with_parent['raw_data'], dict):
+                            rule_with_parent['raw_data']['scopes'] = rule_set['scopes']
+                        # Si raw_data est déjà une chaîne JSON, on la laisse telle quelle
                     
                     rules.append(rule_with_parent)
         
@@ -326,8 +321,9 @@ class RuleConverter:
                         services_list.append(service)
                 rule['services'] = services_list
         
-        # Traiter les scopes
+        # Extraire les scopes si présents
         if 'scopes' in rule_dict:
-            rule['scopes'] = rule_dict['scopes']
+            # Pas besoin de stocker explicitement les scopes car ils sont dans raw_data
+            pass
         
         return rule
