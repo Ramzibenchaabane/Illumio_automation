@@ -112,6 +112,11 @@ class RuleParser:
         if not name and isinstance(raw_data, dict):
             name = raw_data.get('name')
         
+        # Extraire les scopes si disponibles dans les données brutes
+        scopes = None
+        if isinstance(raw_data, dict) and 'scopes' in raw_data:
+            scopes = raw_data.get('scopes')
+        
         # Construction de la règle normalisée
         normalized_rule = {
             'id': rule_id,
@@ -126,6 +131,10 @@ class RuleParser:
             'sec_connect': rule_data.get('sec_connect') or raw_data.get('sec_connect', False),
             'unscoped_consumers': rule_data.get('unscoped_consumers') or raw_data.get('unscoped_consumers', False)
         }
+        
+        # Ajouter les scopes si disponibles
+        if scopes:
+            normalized_rule['scopes'] = RuleParser._parse_scopes(scopes)
         
         # Conserver les données brutes pour référence
         if 'raw_data' not in normalized_rule:
@@ -158,6 +167,52 @@ class RuleParser:
         return False
     
     @staticmethod
+    def _parse_scopes(scopes_data: Any) -> List[Dict[str, Any]]:
+        """
+        Parse les scopes d'un rule set.
+        
+        Args:
+            scopes_data: Données brutes des scopes
+            
+        Returns:
+            Liste des scopes normalisés avec informations de labels
+        """
+        if not scopes_data or not isinstance(scopes_data, list):
+            return []
+        
+        normalized_scopes = []
+        
+        for scope_group in scopes_data:
+            if not isinstance(scope_group, list):
+                continue
+                
+            scope_labels = []
+            for scope_item in scope_group:
+                if not isinstance(scope_item, dict):
+                    continue
+                    
+                if 'label' in scope_item and isinstance(scope_item['label'], dict):
+                    label = scope_item['label']
+                    key = label.get('key')
+                    value = label.get('value')
+                    href = label.get('href')
+                    
+                    if key and value:
+                        scope_labels.append({
+                            'type': 'label',
+                            'key': key,
+                            'value': value,
+                            'display': f"{key}:{value}",
+                            'href': href,
+                            'exclusion': scope_item.get('exclusion', False)
+                        })
+            
+            if scope_labels:
+                normalized_scopes.append(scope_labels)
+        
+        return normalized_scopes
+    
+    @staticmethod
     def _parse_actors(actors_data: Any) -> List[Dict[str, Any]]:
         """
         Parse les acteurs (providers ou consumers) d'une règle.
@@ -188,6 +243,7 @@ class RuleParser:
                 
             actor_type = None
             actor_value = None
+            actor_raw = {}  # Pour stocker les données brutes pertinentes
             
             # Détecter le type d'acteur
             if 'actors' in actor and actor['actors'] == 'ams':
@@ -200,27 +256,58 @@ class RuleParser:
                 value = label.get('value')
                 if key and value:
                     actor_value = f"{key}:{value}"
+                    # Stocker les informations du label dans actor_raw
+                    actor_raw = {
+                        'key': key,
+                        'value': value,
+                        'href': label.get('href')
+                    }
                 else:
                     actor_value = key or "unknown_label"
             elif 'label_group' in actor and isinstance(actor['label_group'], dict):
                 actor_type = 'label_group'
                 lg = actor['label_group']
-                actor_value = lg.get('name') or ApiResponseParser.extract_id_from_href(lg.get('href'))
+                href = lg.get('href')
+                name = lg.get('name')
+                actor_value = name or ApiResponseParser.extract_id_from_href(href)
+                # Stocker les informations du groupe de labels
+                actor_raw = {
+                    'name': name,
+                    'href': href
+                }
             elif 'workload' in actor and isinstance(actor['workload'], dict):
                 actor_type = 'workload'
                 wl = actor['workload']
-                actor_value = wl.get('name') or ApiResponseParser.extract_id_from_href(wl.get('href'))
+                href = wl.get('href')
+                name = wl.get('name')
+                actor_value = name or ApiResponseParser.extract_id_from_href(href)
+                # Stocker les informations du workload
+                actor_raw = {
+                    'name': name,
+                    'href': href
+                }
             elif 'ip_list' in actor and isinstance(actor['ip_list'], dict):
                 actor_type = 'ip_list'
                 ip = actor['ip_list']
-                actor_value = ip.get('name') or ApiResponseParser.extract_id_from_href(ip.get('href'))
+                href = ip.get('href')
+                name = ip.get('name')
+                actor_value = name or ApiResponseParser.extract_id_from_href(href)
+                # Stocker les informations de l'IP list
+                actor_raw = {
+                    'name': name,
+                    'href': href
+                }
             
             if actor_type and actor_value:
                 normalized_actor = {
                     'type': actor_type,
-                    'value': actor_value,
-                    'raw_data': actor
+                    'value': actor_value
                 }
+                
+                # Ajouter les données brutes pertinentes
+                if actor_raw:
+                    for key, value in actor_raw.items():
+                        normalized_actor[key] = value
                 
                 # Extraire l'ID ou le href si disponible pour références ultérieures
                 if actor_type == 'label_group' and 'label_group' in actor:
@@ -235,6 +322,9 @@ class RuleParser:
                     href = actor['ip_list'].get('href')
                     if href:
                         normalized_actor['href'] = href
+                
+                # Conserver les données brutes complètes
+                normalized_actor['raw_data'] = actor
                 
                 normalized_actors.append(normalized_actor)
         

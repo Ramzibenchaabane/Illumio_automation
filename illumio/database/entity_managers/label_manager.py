@@ -77,11 +77,22 @@ class LabelManager:
                 if not label_id:
                     continue
                 
+                # S'assurer que key et value sont présents et non null
+                key = label.get('key')
+                value = label.get('value')
+                
+                if not key:
+                    print(f"Label {label_id} ignoré, clé manquante")
+                    continue
+                
+                if value is None:
+                    value = ""  # Valider avec une chaîne vide si nécessaire
+                
                 # Préparer les données pour l'insertion
                 db_label = {
                     'id': label_id,
-                    'key': label.get('key'),
-                    'value': label.get('value'),
+                    'key': key,
+                    'value': value,
                     'raw_data': json.dumps(label) if isinstance(label, dict) else label.get('raw_data')
                 }
                 
@@ -125,10 +136,18 @@ class LabelManager:
             if 'raw_data' in label and isinstance(label['raw_data'], str):
                 try:
                     raw_data = json.loads(label['raw_data'])
-                    # Fusionner les données brutes avec l'entité
-                    for key, value in raw_data.items():
-                        if key not in label or label[key] is None:
-                            label[key] = value
+                    # Fusion des données brutes avec l'entité
+                    # mais conserver key et value de la base de données qui sont garantis
+                    key = label['key']
+                    value = label['value']
+                    
+                    for k, v in raw_data.items():
+                        if k not in label or label[k] is None:
+                            label[k] = v
+                    
+                    # Rétablir key et value originaux
+                    label['key'] = key
+                    label['value'] = value
                 except (json.JSONDecodeError, TypeError):
                     # Garder raw_data tel quel en cas d'erreur
                     pass
@@ -157,7 +176,9 @@ class LabelManager:
                 # Traiter raw_data si présent
                 if 'raw_data' in label and isinstance(label['raw_data'], str):
                     try:
-                        label['parsed_data'] = json.loads(label['raw_data'])
+                        # Extraire les données JSON mais conserver key et value de la base de données
+                        parsed_data = json.loads(label['raw_data'])
+                        label['parsed_data'] = parsed_data
                     except (json.JSONDecodeError, TypeError):
                         label['parsed_data'] = None
                 
@@ -186,7 +207,29 @@ class LabelManager:
             SELECT * FROM labels WHERE key = ?
             ''', (key,))
             
-            labels = [dict(row) for row in cursor.fetchall()]
+            labels = []
+            for row in cursor.fetchall():
+                label = dict(row)
+                
+                # Traiter raw_data si présent
+                if 'raw_data' in label and isinstance(label['raw_data'], str):
+                    try:
+                        # Extraire les données JSON mais conserver key et value de la base de données
+                        key_val = label['key']
+                        value_val = label['value']
+                        
+                        parsed_data = json.loads(label['raw_data'])
+                        for k, v in parsed_data.items():
+                            if k not in label or label[k] is None:
+                                label[k] = v
+                        
+                        # Rétablir key et value originaux
+                        label['key'] = key_val
+                        label['value'] = value_val
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                
+                labels.append(label)
             
             return ApiResponse.success(
                 data={
@@ -225,9 +268,20 @@ class LabelManager:
             # Traiter raw_data si présent
             if 'raw_data' in label and isinstance(label['raw_data'], str):
                 try:
-                    label['parsed_data'] = json.loads(label['raw_data'])
+                    # Extraire les données JSON mais conserver key et value de la base de données
+                    key_val = label['key']
+                    value_val = label['value']
+                    
+                    parsed_data = json.loads(label['raw_data'])
+                    for k, v in parsed_data.items():
+                        if k not in label or label[k] is None:
+                            label[k] = v
+                    
+                    # Rétablir key et value originaux
+                    label['key'] = key_val
+                    label['value'] = value_val
                 except (json.JSONDecodeError, TypeError):
-                    label['parsed_data'] = None
+                    pass
             
             return ApiResponse.success(
                 data={"label": label}

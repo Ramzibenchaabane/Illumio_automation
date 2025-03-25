@@ -243,6 +243,12 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 rule_row['Services'] = service_str
             else:
                 rule_row['Services'] = 'Tous'
+            
+            # Format scopes if available
+            scopes = rule.get('scopes', [])
+            if scopes:
+                scope_str = self._format_scopes(scopes)
+                rule_row['Scopes'] = scope_str
                 
             # Additional rule properties
             rule_row['Resolve Labels As'] = rule.get('resolve_labels_as', 'N/A')
@@ -254,6 +260,37 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         except Exception as e:
             print(f"Erreur lors du formatage de la règle {rule.get('id', 'inconnue')}: {e}")
             return None
+
+    def _format_scopes(self, scopes: List[List[Dict[str, Any]]]) -> str:
+        """
+        Format scope objects for display.
+        
+        Args:
+            scopes (list): List of scope groups with labels
+            
+        Returns:
+            Formatted string of scope information
+        """
+        if not scopes:
+            return "Aucun"
+        
+        scope_groups = []
+        for scope_group in scopes:
+            label_descriptions = []
+            for label in scope_group:
+                key = label.get('key', '')
+                value = label.get('value', '')
+                
+                if key and value:
+                    if label.get('exclusion'):
+                        label_descriptions.append(f"NON {key}:{value}")
+                    else:
+                        label_descriptions.append(f"{key}:{value}")
+            
+            if label_descriptions:
+                scope_groups.append(" ET ".join(label_descriptions))
+        
+        return " OU ".join(scope_groups) if scope_groups else "Aucun"
     
     def _format_actors(self, actors: List[Dict[str, Any]]) -> str:
         """
@@ -278,23 +315,45 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             value = actor.get('value', '')
             
             if actor_type == 'label':
-                # Format label as value
-                actor_descriptions.append(f"Label: {value}")
+                # Utiliser les informations directes du label quand disponibles
+                key = actor.get('key')
+                val = actor.get('value')
+                
+                if key and val:
+                    actor_descriptions.append(f"Label: {key}:{val}")
+                else:
+                    # Fallback sur la valeur formatée
+                    actor_descriptions.append(f"Label: {value}")
                 
             elif actor_type == 'label_group':
-                # Get label group from database or use fallback
-                label_group_name = self._get_label_group_name(value)
-                actor_descriptions.append(f"Groupe: {label_group_name}")
+                # Récupérer le nom directement depuis l'acteur s'il est disponible
+                name = actor.get('name')
+                if name:
+                    actor_descriptions.append(f"Groupe: {name}")
+                else:
+                    # Fallback: Get label group from database
+                    label_group_name = self._get_label_group_name(value)
+                    actor_descriptions.append(f"Groupe: {label_group_name}")
                 
             elif actor_type == 'workload':
-                # Get workload hostname 
-                workload_hostname = self._get_workload_hostname_from_value(value)
-                actor_descriptions.append(f"Workload: {workload_hostname}")
+                # Récupérer le hostname directement depuis l'acteur s'il est disponible
+                hostname = actor.get('hostname')
+                if hostname:
+                    actor_descriptions.append(f"Workload: {hostname}")
+                else:
+                    # Fallback: Get workload hostname
+                    workload_hostname = self._get_workload_hostname_from_value(value)
+                    actor_descriptions.append(f"Workload: {workload_hostname}")
                 
             elif actor_type == 'ip_list':
-                # Get IP list name
-                ip_list_name = self._get_ip_list_name(value)
-                actor_descriptions.append(f"IP List: {ip_list_name}")
+                # Récupérer le nom directement depuis l'acteur s'il est disponible
+                name = actor.get('name')
+                if name:
+                    actor_descriptions.append(f"IP List: {name}")
+                else:
+                    # Fallback: Get IP list name
+                    ip_list_name = self._get_ip_list_name(value)
+                    actor_descriptions.append(f"IP List: {ip_list_name}")
                 
             elif actor_type == 'ams':
                 actor_descriptions.append("Tous les systèmes gérés")
@@ -530,6 +589,110 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             print(f"Erreur lors de la récupération du service {service_id}: {e}")
             return None
     
+    def _enrich_actors(self, actors: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Enrichit les acteurs (providers ou consumers) avec les noms d'objets.
+        
+        Args:
+            actors (list): Liste des acteurs
+            
+        Returns:
+            list: Liste des acteurs enrichis
+        """
+        enriched_actors = []
+        
+        for actor in actors:
+            actor_type = actor.get('type')
+            
+            if actor_type == 'label':
+                # D'abord, vérifier si les informations sont déjà disponibles dans les données de l'acteur
+                # Cela arrive quand le parseur a extrait ces informations de raw_data
+                raw_data = actor.get('raw_data', {})
+                if isinstance(raw_data, dict) and 'label' in raw_data:
+                    label_data = raw_data['label']
+                    if isinstance(label_data, dict):
+                        key = label_data.get('key')
+                        value = label_data.get('value')
+                        if key and value:
+                            actor['key'] = key
+                            actor['value'] = value
+                            actor['display'] = f"{key}:{value}"
+                
+                # Si nous n'avons pas les détails complets, essayer de les récupérer depuis la base de données
+                if 'key' not in actor and ':' in actor.get('value', ''):
+                    key, value = actor['value'].split(':', 1)
+                    actor['key'] = key
+                    actor['value'] = value
+                    
+                    # Enrichir avec les détails du label depuis la base de données
+                    if hasattr(self.db, 'connect'):
+                        try:
+                            # Get label details from database
+                            conn, cursor = self.db.connect()
+                            cursor.execute('''
+                            SELECT * FROM labels WHERE key = ? AND value = ?
+                            ''', (key, value))
+                            row = cursor.fetchone()
+                            self.db.close(conn)
+                            
+                            if row:
+                                actor['label_details'] = dict(row)
+                        except Exception as e:
+                            print(f"Erreur lors de la récupération des détails du label: {e}")
+            
+            elif actor_type == 'label_group':
+                # Utiliser le nom s'il est déjà présent (depuis raw_data)
+                if 'name' not in actor:
+                    # Sinon, essayer de récupérer le nom depuis la base de données
+                    label_group_name = self._get_label_group_name(actor.get('value', ''))
+                    if label_group_name != actor.get('value', ''):
+                        actor['name'] = label_group_name
+            
+            elif actor_type == 'workload':
+                # Utiliser le hostname s'il est déjà présent (depuis raw_data)
+                if 'hostname' not in actor:
+                    # Sinon, essayer de récupérer le hostname depuis la base de données
+                    workload_hostname = self._get_workload_hostname_from_value(actor.get('value', ''))
+                    if workload_hostname != actor.get('value', ''):
+                        actor['hostname'] = workload_hostname
+            
+            elif actor_type == 'ip_list':
+                # Utiliser le nom s'il est déjà présent (depuis raw_data)
+                if 'name' not in actor:
+                    # Sinon, essayer de récupérer le nom depuis la base de données
+                    ip_list_name = self._get_ip_list_name(actor.get('value', ''))
+                    if ip_list_name != actor.get('value', ''):
+                        actor['name'] = ip_list_name
+            
+            enriched_actors.append(actor)
+        
+        return enriched_actors
+    
+    def _enrich_services(self, services: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Enrichit les services avec plus de détails.
+        
+        Args:
+            services (list): Liste des services
+            
+        Returns:
+            list: Liste des services enrichis
+        """
+        enriched_services = []
+        
+        for service in services:
+            service_type = service.get('type')
+            
+            if service_type == 'service':
+                # Enrichir avec les détails du service
+                service_name = self._get_service_name(service.get('id', ''))
+                if service_name:
+                    service['name'] = service_name
+            
+            enriched_services.append(service)
+        
+        return enriched_services
+    
     def export_query_results(self, 
                              query_id: str, 
                              format_type: str = 'json', 
@@ -669,6 +832,11 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 # Utiliser le parseur pour normaliser la règle
                 normalized_rule = RuleParser.parse_rule(rule_data)
                 
+                # Si rule est une règle de ruleset, il pourrait contenir des informations de scopes
+                # Essayer de récupérer les scopes depuis rule_data si présent
+                if 'scopes' not in normalized_rule and isinstance(rule_data, dict) and 'scopes' in rule_data:
+                    normalized_rule['scopes'] = RuleParser._parse_scopes(rule_data['scopes'])
+                
                 # Enrichir les acteurs (providers et consumers) avec les noms d'objets
                 if 'providers' in normalized_rule:
                     normalized_rule['providers'] = self._enrich_actors(normalized_rule['providers'])
@@ -683,88 +851,9 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 detailed_rules.append(normalized_rule)
             except Exception as e:
                 print(f"Erreur lors de l'enrichissement de la règle {rule.get('id', 'inconnue')}: {e}")
+                import traceback
+                traceback.print_exc()
                 # Ajouter la règle non enrichie
                 detailed_rules.append(rule)
         
         return detailed_rules
-    
-    def _enrich_actors(self, actors: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Enrichit les acteurs (providers ou consumers) avec les noms d'objets.
-        
-        Args:
-            actors (list): Liste des acteurs
-            
-        Returns:
-            list: Liste des acteurs enrichis
-        """
-        enriched_actors = []
-        
-        for actor in actors:
-            actor_type = actor.get('type')
-            
-            if actor_type == 'label':
-                # Enrichir avec les détails du label
-                if hasattr(self.db, 'connect'):
-                    try:
-                        if ':' in actor.get('value', ''):
-                            key, value = actor['value'].split(':', 1)
-                            # Get label details from database
-                            conn, cursor = self.db.connect()
-                            cursor.execute('''
-                            SELECT * FROM labels WHERE key = ? AND value = ?
-                            ''', (key, value))
-                            row = cursor.fetchone()
-                            self.db.close(conn)
-                            
-                            if row:
-                                actor['label_details'] = dict(row)
-                    except Exception:
-                        pass
-            
-            elif actor_type == 'label_group':
-                # Enrichir avec les détails du groupe de labels
-                label_group_name = self._get_label_group_name(actor.get('value', ''))
-                if label_group_name != actor.get('value', ''):
-                    actor['name'] = label_group_name
-            
-            elif actor_type == 'workload':
-                # Enrichir avec les détails du workload
-                workload_hostname = self._get_workload_hostname_from_value(actor.get('value', ''))
-                if workload_hostname != actor.get('value', ''):
-                    actor['hostname'] = workload_hostname
-            
-            elif actor_type == 'ip_list':
-                # Enrichir avec les détails de la liste d'IPs
-                ip_list_name = self._get_ip_list_name(actor.get('value', ''))
-                if ip_list_name != actor.get('value', ''):
-                    actor['name'] = ip_list_name
-            
-            enriched_actors.append(actor)
-        
-        return enriched_actors
-    
-    def _enrich_services(self, services: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Enrichit les services avec plus de détails.
-        
-        Args:
-            services (list): Liste des services
-            
-        Returns:
-            list: Liste des services enrichis
-        """
-        enriched_services = []
-        
-        for service in services:
-            service_type = service.get('type')
-            
-            if service_type == 'service':
-                # Enrichir avec les détails du service
-                service_name = self._get_service_name(service.get('id', ''))
-                if service_name:
-                    service['name'] = service_name
-            
-            enriched_services.append(service)
-        
-        return enriched_services
