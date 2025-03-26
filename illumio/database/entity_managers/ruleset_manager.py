@@ -193,6 +193,15 @@ class RuleSetManager:
                 for row in cursor.fetchall():
                     # Convertir l'enregistrement en dictionnaire
                     rule = RuleConverter.from_db_row(dict(row))
+                    
+                    # S'assurer que le href complet est préservé
+                    if rule.get('id') and ('href' not in rule or not rule['href']):
+                        rule_id = rule['id']
+                        rule_set_id = rule.get('rule_set_id')
+                        if rule_set_id:
+                            # Reconstruire le href complet si manquant
+                            rule['href'] = f"/api/v2/orgs/1/sec_policy/active/rule_sets/{rule_set_id}/sec_rules/{rule_id}"
+                    
                     rules.append(rule)
                 
                 return rules
@@ -237,6 +246,25 @@ class RuleSetManager:
                 
                 # Ajouter les règles au rule set
                 rule_set['rules'] = rules
+                
+                # Extraire les scopes à partir de raw_data si présent
+                if 'raw_data' in rule_set:
+                    raw_data = rule_set['raw_data']
+                    if isinstance(raw_data, str):
+                        try:
+                            parsed_data = json.loads(raw_data)
+                            if isinstance(parsed_data, dict) and 'scopes' in parsed_data:
+                                rule_set['scopes'] = parsed_data['scopes']
+                        except json.JSONDecodeError:
+                            pass
+                    elif isinstance(raw_data, dict) and 'scopes' in raw_data:
+                        rule_set['scopes'] = raw_data['scopes']
+                
+                # S'assurer que le href complet est présent
+                if rule_set.get('id') and ('href' not in rule_set or not rule_set['href']):
+                    rs_id = rule_set['id']
+                    pversion = rule_set.get('pversion', 'active')
+                    rule_set['href'] = f"/api/v2/orgs/1/sec_policy/{pversion}/rule_sets/{rs_id}"
                 
                 return rule_set
                 
@@ -320,6 +348,20 @@ class RuleSetManager:
                 for row in cursor.fetchall():
                     # Convertir l'enregistrement en dictionnaire
                     rule_set = RuleConverter.from_db_rule_set(dict(row))
+                    
+                    # Extraire les scopes à partir de raw_data si présent
+                    if 'raw_data' in rule_set:
+                        raw_data = rule_set['raw_data']
+                        if isinstance(raw_data, str):
+                            try:
+                                parsed_data = json.loads(raw_data)
+                                if isinstance(parsed_data, dict) and 'scopes' in parsed_data:
+                                    rule_set['scopes'] = parsed_data['scopes']
+                            except json.JSONDecodeError:
+                                pass
+                        elif isinstance(raw_data, dict) and 'scopes' in raw_data:
+                            rule_set['scopes'] = raw_data['scopes']
+                    
                     rule_sets.append(rule_set)
                 
                 return rule_sets

@@ -137,7 +137,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 
                 # Préparer les informations de règles (nouveau: format liste)
                 rule_names = []
-                rule_ids = []
+                rule_hrefs = []  # Modifier pour stocker les hrefs complets
                 
                 # Option 1: Règles au format liste (nouveau format)
                 if 'rules' in flow and isinstance(flow['rules'], list):
@@ -147,9 +147,8 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                                 rule_names.append(rule.get('name'))
                             
                             if rule.get('href'):
-                                rule_id = rule.get('href', '').split('/')[-1]
-                                if rule_id:
-                                    rule_ids.append(rule_id)
+                                # Stocker le href complet
+                                rule_hrefs.append(rule.get('href'))
                 
                 # Option 2: Règle unique (format legacy pour compatibilité)
                 elif flow.get('rule_name') or flow.get('rule_href'):
@@ -157,13 +156,12 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                         rule_names.append(flow.get('rule_name'))
                     
                     if flow.get('rule_href'):
-                        rule_id = flow.get('rule_href', '').split('/')[-1]
-                        if rule_id:
-                            rule_ids.append(rule_id)
+                        # Stocker le href complet
+                        rule_hrefs.append(flow.get('rule_href'))
                 
-                # Joindre les noms et IDs avec des séparateurs pour l'affichage
-                rule_names_str = " | ".join(rule_names) if rule_names else ""
-                rule_ids_str = " | ".join(rule_ids) if rule_ids else ""
+                # Joindre les noms et hrefs avec des sauts de ligne
+                rule_names_str = "\n".join(rule_names) if rule_names else ""
+                rule_hrefs_str = "\n".join(rule_hrefs) if rule_hrefs else ""
                 
                 flow_row = {
                     'Source IP': flow.get('src_ip'),
@@ -179,7 +177,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                     'Première détection': flow.get('first_detected'),
                     'Dernière détection': flow.get('last_detected'),
                     'Règles': rule_names_str,
-                    'IDs Règles': rule_ids_str
+                    'URLs Règles': rule_hrefs_str  # Champ renommé pour plus de clarté
                 }
                 
                 # Add any Excel metadata if present
@@ -255,8 +253,19 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 'Nom Règle': rule.get('name', ''),
                 'Description': rule.get('description', 'Sans description'),
                 'Activée': 'Oui' if rule.get('enabled', False) else 'Non',
+                'URL Règle': rule.get('href', '')  # Ajout de l'URL complète de la règle
             }
             
+            # Ajouter les informations du ruleset
+            rule_row['Ruleset'] = rule.get('ruleset_name', 'Inconnu')
+            
+            # Formater les scopes du ruleset
+            if 'ruleset_scopes' in rule and rule['ruleset_scopes']:
+                ruleset_scope_str = self._format_scopes(rule['ruleset_scopes'])
+                rule_row['Scopes Ruleset'] = ruleset_scope_str
+            else:
+                rule_row['Scopes Ruleset'] = 'Aucun'
+                
             # Format providers (sources)
             providers = rule.get('providers', [])
             if providers:
@@ -329,7 +338,8 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             if label_descriptions:
                 scope_groups.append(" ET ".join(label_descriptions))
         
-        return " OU ".join(scope_groups) if scope_groups else "Aucun"
+        # Utiliser des sauts de ligne au lieu de " OU "
+        return "\n".join(scope_groups) if scope_groups else "Aucun"
     
     def _format_actors(self, actors: List[Dict[str, Any]]) -> str:
         """
@@ -362,6 +372,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 if 'href' in actor:
                     label_href = actor['href']
                 
+                # Option 2: Extraire le href depuis raw_data
                 # Option 2: Extraire le href depuis raw_data
                 elif 'raw_data' in actor and isinstance(actor['raw_data'], dict):
                     raw_data = actor['raw_data']
@@ -450,7 +461,8 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             else:
                 actor_descriptions.append(f"{actor_type}: {value}")
         
-        return " | ".join(actor_descriptions) if actor_descriptions else "Aucun"
+        # Utiliser des sauts de ligne au lieu de " | "
+        return "\n".join(actor_descriptions) if actor_descriptions else "Aucun"
     
     def _get_entity_details(self, entity_type: str, entity_id: Optional[str]) -> Union[Dict[str, Any], str, None]:
         """
@@ -541,7 +553,8 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 # Default format for unknown services
                 service_descriptions.append(str(service))
                 
-        return " | ".join(service_descriptions) if service_descriptions else "Aucun"
+        # Utiliser des sauts de ligne au lieu de " | "
+        return "\n".join(service_descriptions) if service_descriptions else "Aucun"
     
     def extract_rule_hrefs(self, flows: List[Dict[str, Any]]) -> List[str]:
         """
@@ -559,7 +572,8 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
     def get_detailed_rules(self, rule_hrefs: List[str]) -> List[Dict[str, Any]]:
         """
         Récupère les détails complets des règles à partir de leurs hrefs depuis la base de données locale.
-        Cette version mise à jour s'assure que les informations de label sont correctement préservées.
+        Cette version mise à jour s'assure que les informations de label sont correctement préservées
+        et ajoute les informations du ruleset (nom et scopes).
         
         Args:
             rule_hrefs (list): Liste des hrefs des règles
@@ -578,6 +592,17 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
             if hasattr(self.db, 'get_rules_by_hrefs'):
                 rules = self.db.get_rules_by_hrefs(rule_hrefs)
                 
+                # Récupérer les informations des rulesets
+                ruleset_infos = {}
+                for rule in rules:
+                    # Si la règle a un rule_set_id, récupérer les infos du ruleset
+                    if 'rule_set_id' in rule and rule['rule_set_id']:
+                        ruleset_id = rule['rule_set_id']
+                        if ruleset_id not in ruleset_infos:
+                            # Récupérer les informations du ruleset
+                            ruleset_info = self.db.get_rule_set(ruleset_id)
+                            ruleset_infos[ruleset_id] = ruleset_info
+                
                 # Transformation finale des règles pour l'affichage
                 for rule in rules:
                     try:
@@ -591,20 +616,55 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                                     # Utilisation directe des données brutes pour le parsing
                                     normalized_rule = RuleParser.parse_rule(raw_data)
                                     
+                                    # Ajouter les informations du ruleset à la règle normalisée
+                                    if 'rule_set_id' in rule and rule['rule_set_id']:
+                                        ruleset_id = rule['rule_set_id']
+                                        if ruleset_id in ruleset_infos and ruleset_infos[ruleset_id]:
+                                            ruleset_info = ruleset_infos[ruleset_id]
+                                            normalized_rule['ruleset_name'] = ruleset_info.get('name', 'Inconnu')
+                                            normalized_rule['ruleset_scopes'] = ruleset_info.get('scopes', [])
+                                    
                                     if normalized_rule:
                                         detailed_rules.append(normalized_rule)
                                 except json.JSONDecodeError as e:
                                     normalized_rule = RuleParser.parse_rule(rule)
+                                    
+                                    # Ajouter les informations du ruleset
+                                    if 'rule_set_id' in rule and rule['rule_set_id']:
+                                        ruleset_id = rule['rule_set_id']
+                                        if ruleset_id in ruleset_infos and ruleset_infos[ruleset_id]:
+                                            ruleset_info = ruleset_infos[ruleset_id]
+                                            normalized_rule['ruleset_name'] = ruleset_info.get('name', 'Inconnu')
+                                            normalized_rule['ruleset_scopes'] = ruleset_info.get('scopes', [])
+                                    
                                     if normalized_rule:
                                         detailed_rules.append(normalized_rule)
                             else:
                                 # Si raw_data est déjà un objet
                                 normalized_rule = RuleParser.parse_rule(rule['raw_data'])
+                                
+                                # Ajouter les informations du ruleset
+                                if 'rule_set_id' in rule and rule['rule_set_id']:
+                                    ruleset_id = rule['rule_set_id']
+                                    if ruleset_id in ruleset_infos and ruleset_infos[ruleset_id]:
+                                        ruleset_info = ruleset_infos[ruleset_id]
+                                        normalized_rule['ruleset_name'] = ruleset_info.get('name', 'Inconnu')
+                                        normalized_rule['ruleset_scopes'] = ruleset_info.get('scopes', [])
+                                
                                 if normalized_rule:
                                     detailed_rules.append(normalized_rule)
                         else:
                             # Si pas de raw_data, utiliser la règle directement
                             normalized_rule = RuleParser.parse_rule(rule)
+                            
+                            # Ajouter les informations du ruleset
+                            if 'rule_set_id' in rule and rule['rule_set_id']:
+                                ruleset_id = rule['rule_set_id']
+                                if ruleset_id in ruleset_infos and ruleset_infos[ruleset_id]:
+                                    ruleset_info = ruleset_infos[ruleset_id]
+                                    normalized_rule['ruleset_name'] = ruleset_info.get('name', 'Inconnu')
+                                    normalized_rule['ruleset_scopes'] = ruleset_info.get('scopes', [])
+                            
                             if normalized_rule:
                                 detailed_rules.append(normalized_rule)
                     except Exception as e:
@@ -633,6 +693,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         Returns:
             bool: True if export successful
         """
+        # Retrieve flows for the query
         # Retrieve flows for the query
         flows = self.db.get_traffic_flows(query_id)
         

@@ -400,7 +400,7 @@ class RuleParser:
         
         for flow in flows:
             # Différentes façons de trouver les hrefs des règles
-            
+                    
             # 1. Chercher dans le champ 'rule_href'
             if isinstance(flow, dict) and 'rule_href' in flow and flow['rule_href']:
                 # Le champ peut contenir plusieurs hrefs séparés par des points-virgules
@@ -435,7 +435,7 @@ class RuleParser:
         
         # Filtrer les valeurs non valides
         return [href for href in unique_rule_hrefs if href and href != 'N/A']
-    
+            
     @staticmethod
     def _extract_hrefs_from_rules(rules: Any, href_set: Set[str]):
         """
