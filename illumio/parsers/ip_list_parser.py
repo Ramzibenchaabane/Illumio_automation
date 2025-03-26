@@ -253,26 +253,77 @@ class IPListParser:
             conn, cursor = db.connect()
             
             cursor.execute('''
-            SELECT name, description FROM ip_lists WHERE id = ?
+            SELECT name, description, raw_data FROM ip_lists WHERE id = ?
             ''', (ip_list_id,))
             
             row = cursor.fetchone()
+            
+            if not row:
+                db.close(conn)
+                return {}
+                
+            # Convertir sqlite3.Row en dictionnaire
+            ip_list_data = dict(row)
+            ip_list_data['id'] = ip_list_id
+            
+            # Récupérer les plages d'IPs
+            cursor.execute('''
+            SELECT * FROM ip_ranges WHERE ip_list_id = ?
+            ''', (ip_list_id,))
+            
+            ip_ranges = []
+            for range_row in cursor.fetchall():
+                range_data = dict(range_row)
+                ip_ranges.append({
+                    'from_ip': range_data['from_ip'],
+                    'to_ip': range_data['to_ip'],
+                    'description': range_data.get('description'),
+                    'exclusion': bool(range_data.get('exclusion', 0))
+                })
+            
+            # Récupérer les FQDNs
+            cursor.execute('''
+            SELECT * FROM fqdns WHERE ip_list_id = ?
+            ''', (ip_list_id,))
+            
+            fqdns = []
+            for fqdn_row in cursor.fetchall():
+                fqdn_data = dict(fqdn_row)
+                fqdns.append({
+                    'fqdn': fqdn_data['fqdn'],
+                    'description': fqdn_data.get('description')
+                })
+            
             db.close(conn)
             
-            if row:
-                ip_list_data = {
-                    'id': ip_list_id,
-                    'name': row['name'],
-                    'description': row.get('description')
-                }
-                
-                # Normaliser les données avec le parseur
-                return IPListParser.parse_ip_list(ip_list_data)
-                
-            return {}
+            # Si raw_data existe et contient des données JSON valides, les utiliser
+            if 'raw_data' in ip_list_data and ip_list_data['raw_data']:
+                try:
+                    raw_data = json.loads(ip_list_data['raw_data'])
+                    # Fusionner avec les données existantes mais préserver l'ID, le nom, etc.
+                    combined_data = {**raw_data, **ip_list_data}
+                    
+                    # Assurer que les plages d'IPs et FQDNs de la base sont utilisés
+                    if ip_ranges:
+                        combined_data['ip_ranges'] = ip_ranges
+                    if fqdns:
+                        combined_data['fqdns'] = fqdns
+                    
+                    return IPListParser.parse_ip_list(combined_data)
+                except json.JSONDecodeError:
+                    pass
             
+            # Si raw_data n'est pas utilisable, construire avec les données disponibles
+            ip_list_data['ip_ranges'] = ip_ranges
+            ip_list_data['fqdns'] = fqdns
+            
+            # Normaliser les données avec le parseur
+            return IPListParser.parse_ip_list(ip_list_data)
+                
         except Exception as e:
             print(f"Erreur lors de la récupération de la liste d'IPs {ip_list_id}: {e}")
+            if conn:
+                db.close(conn)
             return {}
     
     @staticmethod
