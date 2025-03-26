@@ -91,15 +91,28 @@ class TrafficFlowParser:
             fallback_proto=flow_data.get('service_protocol') or flow_data.get('protocol')
         )
         
-        # Extraction normalisée des données de règle
-        rule_data = {}
-        if 'rule_href' in flow_data or 'rule_name' in flow_data:
-            rule_data = {
+        # Extraction normalisée des données de règles (maintenant au pluriel)
+        rule_data_list = []
+        
+        # Vérifier si des règles sont déjà présentes dans les formats raw_data ou rules
+        if 'rules' in flow_data:
+            # Utiliser le parseur pour récupérer toutes les règles (maintenant au pluriel)
+            rule_data_list = RuleParser.parse_rule_reference(flow_data['rules'])
+        
+        # Ajouter également la règle unique si elle existe via rule_href/rule_name
+        if ('rule_href' in flow_data or 'rule_name' in flow_data) and flow_data.get('rule_href'):
+            single_rule = {
                 'href': flow_data.get('rule_href'),
                 'name': flow_data.get('rule_name')
             }
-        elif 'rules' in flow_data:
-            rule_data = RuleParser.parse_rule_reference(flow_data['rules'])
+            
+            # Vérifier si cette règle n'est pas déjà dans la liste
+            if not any(r.get('href') == single_rule['href'] for r in rule_data_list if r.get('href')):
+                rule_data_list.append(single_rule)
+        
+        # S'assurer qu'il y a toujours au moins une entrée, même vide, pour compatibilité
+        if not rule_data_list:
+            rule_data_list = [{'href': None, 'name': None}]
         
         # Construction du flux normalisé
         normalized_flow = {
@@ -117,9 +130,16 @@ class TrafficFlowParser:
                              flow_data.get('timestamp_range', {}).get('first_detected'),
             'last_detected': flow_data.get('last_detected') or
                             flow_data.get('timestamp_range', {}).get('last_detected'),
-            'rule_href': rule_data.get('href'),
-            'rule_name': rule_data.get('name')
+            'rules': rule_data_list  # Stocker la liste complète des règles
         }
+        
+        # Pour la compatibilité, garder aussi le premier 'rule_href' et 'rule_name'
+        if rule_data_list and rule_data_list[0]:
+            normalized_flow['rule_href'] = rule_data_list[0].get('href')
+            normalized_flow['rule_name'] = rule_data_list[0].get('name')
+        else:
+            normalized_flow['rule_href'] = None
+            normalized_flow['rule_name'] = None
         
         # Si des métadonnées Excel existent, les préserver
         if 'excel_metadata' in flow_data:

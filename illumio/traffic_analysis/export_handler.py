@@ -135,6 +135,36 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                 src_workload_name = WorkloadParser.get_workload_display_name(src_workload_info)
                 dst_workload_name = WorkloadParser.get_workload_display_name(dst_workload_info)
                 
+                # Préparer les informations de règles (nouveau: format liste)
+                rule_names = []
+                rule_ids = []
+                
+                # Option 1: Règles au format liste (nouveau format)
+                if 'rules' in flow and isinstance(flow['rules'], list):
+                    for rule in flow['rules']:
+                        if isinstance(rule, dict):
+                            if rule.get('name'):
+                                rule_names.append(rule.get('name'))
+                            
+                            if rule.get('href'):
+                                rule_id = rule.get('href', '').split('/')[-1]
+                                if rule_id:
+                                    rule_ids.append(rule_id)
+                
+                # Option 2: Règle unique (format legacy pour compatibilité)
+                elif flow.get('rule_name') or flow.get('rule_href'):
+                    if flow.get('rule_name'):
+                        rule_names.append(flow.get('rule_name'))
+                    
+                    if flow.get('rule_href'):
+                        rule_id = flow.get('rule_href', '').split('/')[-1]
+                        if rule_id:
+                            rule_ids.append(rule_id)
+                
+                # Joindre les noms et IDs avec des séparateurs pour l'affichage
+                rule_names_str = " | ".join(rule_names) if rule_names else ""
+                rule_ids_str = " | ".join(rule_ids) if rule_ids else ""
+                
                 flow_row = {
                     'Source IP': flow.get('src_ip'),
                     'Source Workload': src_workload_name,
@@ -148,8 +178,8 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                     'Connexions': flow.get('num_connections'),
                     'Première détection': flow.get('first_detected'),
                     'Dernière détection': flow.get('last_detected'),
-                    'Règle': flow.get('rule_name'),
-                    'ID Règle': flow.get('rule_href', '').split('/')[-1] if flow.get('rule_href') else ''
+                    'Règles': rule_names_str,
+                    'IDs Règles': rule_ids_str
                 }
                 
                 # Add any Excel metadata if present
@@ -351,7 +381,7 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
                         actor_descriptions.append(f"Label: {display_text}")
                         continue
                 
-                # Si on n'a pas pu récupérer les informations du label, utiliser une valeur de secours
+                    # Si on n'a pas pu récupérer les informations du label, utiliser une valeur de secours
                 actor_descriptions.append(f"Label: {value or 'Non spécifié'}")
             
             elif actor_type == 'label_group':
@@ -589,9 +619,9 @@ class TrafficExportHandler(TrafficAnalysisBaseComponent):
         return detailed_rules
     
     def export_query_results(self, 
-                             query_id: str, 
-                             format_type: str = 'json', 
-                             output_file: Optional[str] = None) -> bool:
+                                query_id: str, 
+                                format_type: str = 'json', 
+                                output_file: Optional[str] = None) -> bool:
         """
         Export results for a specific traffic query.
         

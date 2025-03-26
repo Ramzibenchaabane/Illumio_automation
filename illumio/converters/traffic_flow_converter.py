@@ -43,26 +43,34 @@ class TrafficFlowConverter:
             'first_detected': flow.get('first_detected'),
             'last_detected': flow.get('last_detected'),
             'num_connections': flow.get('num_connections'),
-            'flow_direction': flow.get('flow_direction'),
-            'rule_href': flow.get('rule_href'),
-            'rule_name': flow.get('rule_name')
+            'flow_direction': flow.get('flow_direction')
         }
         
-        # Traiter les règles
-        rules = flow.get('rules')
-        if rules:
-            rule_sec_policy = None
+        # MODIFICATION: Stocker tous les rule_href et rule_name comme un json
+        # Extraire toutes les règles du flux
+        rules_list = flow.get('rules', [])
+        
+        # Préparer les règles et stocker la liste complète
+        if rules_list:
+            # Stocker toutes les règles sous forme de JSON
+            db_flow['rule_sec_policy'] = json.dumps(rules_list)
             
-            if isinstance(rules, dict) and 'sec_policy' in rules:
-                # Format 1: {"sec_policy": {...}}
-                sec_policy = rules.get('sec_policy', {})
-                rule_sec_policy = json.dumps(sec_policy) if isinstance(sec_policy, dict) else None
-            elif isinstance(rules, list) and len(rules) > 0:
-                # Format 2: [{"href": "...", ...}, ...]
-                rule = rules[0]
-                rule_sec_policy = json.dumps(rule) if isinstance(rule, dict) else None
+            # Maintenir aussi les champs individuels pour compatibilité ascendante
+            # (en utilisant la première règle)
+            if rules_list and isinstance(rules_list, list) and len(rules_list) > 0 and isinstance(rules_list[0], dict):
+                first_rule = rules_list[0]
+                db_flow['rule_href'] = first_rule.get('href')
+                db_flow['rule_name'] = first_rule.get('name')
+        else:
+            # Cas alternatif: règles provenant directement du flow original
+            # Format Legacy: Stocker les attributs rule_href et rule_name directement
+            db_flow['rule_href'] = flow.get('rule_href')
+            db_flow['rule_name'] = flow.get('rule_name')
             
-            db_flow['rule_sec_policy'] = rule_sec_policy
+            # Si rule_href est présent mais pas rule_sec_policy, créer une structure compatible
+            if db_flow.get('rule_href') and not 'rule_sec_policy' in db_flow:
+                rule_entry = {'href': db_flow['rule_href'], 'name': db_flow['rule_name']}
+                db_flow['rule_sec_policy'] = json.dumps([rule_entry])
         
         # Conserver les données brutes pour référence
         if 'raw_data' not in flow:
@@ -143,19 +151,34 @@ class TrafficFlowConverter:
         if service:
             normalized_flow['service'] = service
         
-        # Reconstruire les règles
+        # MODIFICATION: Reconstruire toutes les règles depuis rule_sec_policy
+        rules = []
+        
         if flow.get('rule_sec_policy'):
             try:
                 rule_sec_policy = json.loads(flow['rule_sec_policy'])
-                if 'href' in rule_sec_policy:
-                    # Format 2: [{"href": "..."}]
-                    normalized_flow['rules'] = [rule_sec_policy]
+                
+                # Déterminer si c'est une liste ou un dictionnaire legacy
+                if isinstance(rule_sec_policy, list):
+                    # Format moderne: liste de règles
+                    rules = rule_sec_policy
+                elif isinstance(rule_sec_policy, dict):
+                    # Format legacy: {"sec_policy": {...}}
+                    rules = {'sec_policy': rule_sec_policy}
                 else:
-                    # Format 1: {"sec_policy": {...}}
-                    normalized_flow['rules'] = {'sec_policy': rule_sec_policy}
+                    # Fallback
+                    rules = [{'href': flow.get('rule_href'), 'name': flow.get('rule_name')}]
             except (json.JSONDecodeError, TypeError):
-                # Ne pas ajouter de règles en cas d'erreur
-                pass
+                # En cas d'erreur, utiliser le fallback
+                if flow.get('rule_href'):
+                    rules = [{'href': flow.get('rule_href'), 'name': flow.get('rule_name')}]
+        elif flow.get('rule_href'):
+            # Cas où rule_sec_policy n'existe pas mais rule_href oui
+            rules = [{'href': flow.get('rule_href'), 'name': flow.get('rule_name')}]
+            
+        # Ajouter les règles à la sortie
+        if rules:
+            normalized_flow['rules'] = rules
         
         # Conserver raw_data
         if 'raw_data' in flow:

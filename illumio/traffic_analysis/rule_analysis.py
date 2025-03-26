@@ -167,8 +167,31 @@ class DeepRuleAnalyzer(TrafficAnalysisBaseComponent):
                     params=download_params
                 )
                 
-                # Parse les résultats en utilisant le parseur
+                # Avant le parsing, vérifier si les règles multiples sont présentes
+                # Dans le cas d'API qui renvoient plusieurs règles, il faut s'assurer 
+                # qu'elles sont toutes préservées avant le parsing
+                for flow in raw_results:
+                    if isinstance(flow, dict) and 'rules' in flow and isinstance(flow['rules'], list) and len(flow['rules']) > 1:
+                        print(f"✓ Multiples règles identifiées pour certains flux ({len(flow['rules'])} règles pour un flux)")
+                
+                # Parse tous les résultats en utilisant le parseur mis à jour
+                # qui prend maintenant en charge les règles multiples
                 final_results = TrafficFlowParser.parse_flows(raw_results)
+                
+                # Log pour confirmer la préservation des règles multiples
+                rules_counts = {}
+                for flow in final_results:
+                    if 'rules' in flow and isinstance(flow['rules'], list):
+                        rule_count = len(flow['rules'])
+                        if rule_count in rules_counts:
+                            rules_counts[rule_count] += 1
+                        else:
+                            rules_counts[rule_count] = 1
+                
+                # Afficher la distribution des nombres de règles
+                if rules_counts:
+                    for count, flows_count in sorted(rules_counts.items()):
+                        print(f"  - {flows_count} flux avec {count} règle(s)")
                 
                 print(f"✅ {len(final_results)} résultats récupérés avec analyse de règles.")
                 return final_results

@@ -15,49 +15,54 @@ class RuleParser:
     """Classe pour parser les règles de sécurité Illumio."""
     
     @staticmethod
-    def parse_rule_reference(rules_data: Any) -> Dict[str, Optional[str]]:
+    def parse_rule_reference(rules_data: Any) -> List[Dict[str, Optional[str]]]:
         """
-        Parse la référence à une règle depuis différents formats de données.
+        Parse la référence à une ou plusieurs règles depuis différents formats de données.
         
         Args:
             rules_data: Données de règle au format dict ou list
             
         Returns:
-            dict: Dictionnaire contenant href et name de la règle
+            list: Liste de dictionnaires contenant href et name des règles
         """
         if rules_data is None:
-            return {'href': None, 'name': None}
+            return [{'href': None, 'name': None}]
+            
+        result_rules = []
             
         # Format 1: {"sec_policy": {"href": "...", "name": "..."}}
         if isinstance(rules_data, dict) and 'sec_policy' in rules_data:
             sec_policy = rules_data.get('sec_policy', {})
             if isinstance(sec_policy, dict):
-                return {
+                result_rules.append({
                     'href': sec_policy.get('href'),
                     'name': sec_policy.get('name')
-                }
+                })
             elif isinstance(sec_policy, str):
                 # Parfois sec_policy peut être juste l'URL
-                return {
+                result_rules.append({
                     'href': sec_policy,
                     'name': ApiResponseParser.extract_id_from_href(sec_policy)
-                }
+                })
         
         # Format 2: [{"href": "...", "name": "..."}, ...]
         elif isinstance(rules_data, list) and rules_data:
-            first_rule = rules_data[0]
-            if isinstance(first_rule, dict):
-                href = first_rule.get('href')
-                name = first_rule.get('name')
-                if name is None and href:
-                    name = ApiResponseParser.extract_id_from_href(href)
-                return {
-                    'href': href,
-                    'name': name
-                }
+            for rule in rules_data:
+                if isinstance(rule, dict):
+                    href = rule.get('href')
+                    name = rule.get('name')
+                    if name is None and href:
+                        name = ApiResponseParser.extract_id_from_href(href)
+                    result_rules.append({
+                        'href': href,
+                        'name': name
+                    })
         
-        # Format inconnu, retourner des valeurs vides
-        return {'href': None, 'name': None}
+        # Retourner au moins une règle avec des valeurs vides si aucune règle n'a été trouvée
+        if not result_rules:
+            return [{'href': None, 'name': None}]
+            
+        return result_rules
     
     @staticmethod
     def parse_rule(rule_data: Dict[str, Any]) -> Dict[str, Any]:
