@@ -5,5 +5,6 @@
 from . import menu_utils
 from . import sync_menu
 from . import traffic_menu
+from . import clustering_menu
 
-__all__ = ['menu_utils', 'sync_menu', 'traffic_menu']
+__all__ = ['menu_utils', 'sync_menu', 'traffic_menu', 'clustering_menu']

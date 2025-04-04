@@ -9,6 +9,7 @@ import os
 from cli_modules.menu_utils import print_header, print_menu, get_user_choice
 from cli_modules.sync_menu import sync_database_menu
 from cli_modules.traffic_menu import traffic_analysis_menu
+from cli_modules.clustering_menu import server_clustering_menu
 from illumio.utils.directory_manager import get_input_dir, get_output_dir
 
 def check_dependencies():
@@ -36,6 +37,17 @@ def check_dependencies():
     except ImportError:
         missing_deps.append("openpyxl")
     
+    # Ajout de vérification pour les dépendances de clustering
+    try:
+        import networkx
+    except ImportError:
+        missing_deps.append("networkx")
+    
+    try:
+        import community
+    except ImportError:
+        missing_deps.append("python-louvain")
+    
     if missing_deps:
         print("Dépendances manquantes:")
         for dep in missing_deps:
@@ -55,6 +67,7 @@ def main_menu():
         options = [
             "Synchroniser la base de données",
             "Analyse de trafic",
+            "Analyse de clustering de serveurs",
             "Afficher les statistiques"
         ]
         
@@ -70,6 +83,8 @@ def main_menu():
         elif choice == 2:
             traffic_analysis_menu()
         elif choice == 3:
+            server_clustering_menu()
+        elif choice == 4:
             show_statistics()
 
 def show_statistics():
@@ -123,12 +138,13 @@ def show_statistics():
 
 def show_version():
     """Affiche la version de l'application."""
-    print("\nIllumio Automation Tool v1.2")
+    print("\nIllumio Automation Tool v1.3")
     print("© 2025 - Tous droits réservés")
     print("\nAméliorations:")
     print("- Analyse manuelle (source/destination/service)")
     print("- Import de fichiers Excel depuis le dossier 'input_files'")
     print("- Export des résultats dans le dossier 'outputs'")
+    print("- Analyse de clustering de serveurs avec l'algorithme de Louvain")
 
 def setup_directories():
     """Crée les répertoires nécessaires pour l'application."""
