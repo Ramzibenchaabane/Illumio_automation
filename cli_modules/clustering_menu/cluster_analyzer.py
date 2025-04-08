@@ -1,7 +1,6 @@
-# cli_modules/clustering_menu/cluster_analyzer.py
 #!/usr/bin/env python3
 """
-Module pour l'analyse de clustering de serveurs avec l'algorithme de Louvain.
+Module pour l'analyse de clustering de serveurs avec différents algorithmes.
 """
 import os
 import json
@@ -12,6 +11,19 @@ import networkx as nx
 import community as community_louvain
 from collections import defaultdict
 import pandas as pd
+import numpy as np
+
+# Imports qui peuvent être manquants (avec gestion des ImportError dans les fonctions)
+try:
+    from sklearn.cluster import SpectralClustering, AgglomerativeClustering
+except ImportError:
+    pass  # Ces imports sont gérés dans les fonctions spécifiques
+
+try:
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import minimum_spanning_tree
+except ImportError:
+    pass  # Ces imports sont gérés dans les fonctions spécifiques
 
 from cli_modules.menu_utils import print_header, print_menu, get_user_choice
 from illumio.utils.directory_manager import get_input_dir, get_output_dir, list_files, get_file_path
@@ -43,533 +55,16 @@ def run_server_clustering_analysis():
     
     # Retour au menu précédent est géré dans chaque fonction
 
-def select_and_analyze_file():
-    """Sélectionne un fichier (Excel ou JSON) et lance l'analyse de clustering."""
-    print_header()
-    print("SÉLECTION D'UN FICHIER POUR L'ANALYSE DE CLUSTERING\n")
-    
-    # Obtenir le dossier d'entrée et la liste des fichiers Excel et JSON
-    input_dir = get_input_dir()
-    excel_files = list_files('input', extension='.xlsx') + list_files('input', extension='.xls')
-    json_files = list_files('input', extension='.json')
-    
-    all_files = excel_files + json_files
-    if not all_files:
-        print(f"Aucun fichier Excel ou JSON trouvé dans le dossier {input_dir}")
-        print("Veuillez y placer un fichier Excel ou JSON contenant des données de serveurs ou générer un exemple.")
-        input("\nAppuyez sur Entrée pour revenir au menu précédent...")
-        return
-    
-    # Afficher la liste des fichiers numérotés
-    print(f"\nFichiers disponibles dans {input_dir}:")
-    for i, file in enumerate(all_files, 1):
-        file_type = "Excel" if file.endswith(('.xlsx', '.xls')) else "JSON"
-        print(f"{i}. {file} [{file_type}]")
-    
-    print("\n0. Revenir au menu précédent")
-    
-    # Demander à l'utilisateur de choisir un fichier par son numéro
-    choice = input("\nVotre choix (numéro du fichier): ")
-    
-    if choice == '0' or not choice:
-        return
-    
-    try:
-        file_index = int(choice) - 1
-        if file_index < 0 or file_index >= len(all_files):
-            print("Choix invalide.")
-            input("\nAppuyez sur Entrée pour revenir au menu précédent...")
-            return
-        
-        file_name = all_files[file_index]
-        file_path = os.path.join(input_dir, file_name)
-        
-        print(f"\nAnalyse du fichier: {file_name}")
-        
-        # Générer un timestamp unique pour cette analyse
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        # Préparer les noms de fichiers de sortie avec le timestamp
-        output_dir = get_output_dir()
-        base_output_name = f"server_clusters_{timestamp}"
-        results_file = os.path.join(output_dir, f"{base_output_name}_results.json")
-        excel_file = os.path.join(output_dir, f"{base_output_name}_results.xlsx")
-        visualization_file = os.path.join(output_dir, f"{base_output_name}_visualization.html")
-        
-        # Déterminer le type de fichier et le traiter en conséquence
-        is_excel = file_name.endswith(('.xlsx', '.xls'))
-        
-        # Exécuter l'analyse
-        print("\nDémarrage de l'analyse de clustering...")
-        start_time = time.time()
-        
-        try:
-            # Charger les données selon le format du fichier
-            if is_excel:
-                servers_data = load_excel_data(file_path)
-                print(f"Données Excel chargées : {len(servers_data)} serveurs")
-            else:
-                servers_data = load_json_data(file_path)
-                print(f"Données JSON chargées : {len(servers_data)} serveurs")
-            
-            # Appel à la fonction d'analyse avec le nouveau paramètre excel_file
-            clusters, labels, graph, cluster_stats = analyze_server_clustering(
-                servers_data, 
-                results_file, 
-                excel_file,
-                visualization_file,
-                is_data_loaded=True
-            )
-            
-            end_time = time.time()
-            duration = end_time - start_time
-            
-            print(f"\n✅ Analyse terminée en {duration:.2f} secondes.")
-            print(f"Nombre de serveurs analysés: {len(graph.nodes())}")
-            print(f"Nombre de clusters identifiés: {len(clusters)}")
-            
-            # Afficher un résumé des principaux clusters
-            print("\nPrincipaux clusters identifiés:")
-            top_clusters = sorted(clusters.items(), key=lambda x: len(x[1]), reverse=True)[:5]
-            for cluster_id, servers in top_clusters:
-                print(f"  - Cluster {cluster_id}: {len(servers)} serveurs")
-            
-            # Indiquer où les fichiers ont été sauvegardés
-            print("\nFichiers générés:")
-            print(f"  - Résultats JSON: {results_file}")
-            print(f"  - Résultats Excel: {excel_file}")
-            print(f"  - Visualisation HTML: {visualization_file}")
-            print("\nVous pouvez ouvrir le fichier HTML dans votre navigateur pour explorer interactivement les clusters.")
-            print("Le fichier Excel contient les statistiques et les détails des clusters.")
-            
-        except Exception as e:
-            print(f"\n❌ Erreur lors de l'analyse: {e}")
-            traceback.print_exc()
-    
-    except ValueError:
-        print("Veuillez entrer un nombre valide.")
-        input("\nAppuyez sur Entrée pour revenir au menu précédent...")
-    except Exception as e:
-        print(f"Erreur: {e}")
-        traceback.print_exc()
-    
-    input("\nAppuyez sur Entrée pour revenir au menu précédent...")
-
-def export_results_to_excel(clusters, labels, graph, cluster_stats, output_file):
-    """
-    Exporte les résultats de l'analyse de clustering dans un fichier Excel à deux feuilles,
-    avec une approche simplifiée pour éviter les problèmes de corruption.
-    
-    Args:
-        clusters (dict): Dictionnaire des clusters (id: liste de serveurs)
-        labels (dict): Dictionnaire des labels (serveur: label)
-        graph (nx.Graph): Graphe des serveurs
-        cluster_stats (pd.DataFrame): Statistiques des clusters
-        output_file (str): Chemin du fichier Excel de sortie
-    """
-    try:
-        print(f"Exportation des résultats vers Excel: {output_file}")
-        
-        # 1. Préparation des données pour la feuille de statistiques
-        stats_data = []
-        # En-têtes
-        stats_data.append(['ID Cluster', 'Nombre de serveurs', 
-                          'Nombre d\'applications uniques', 
-                          'Moyenne d\'applications par serveur'])
-        
-        # Données des statistiques
-        for _, row in cluster_stats.iterrows():
-            stats_data.append([
-                str(row['cluster_id']),  # Convertir en string explicitement
-                row['num_servers'],
-                row['num_unique_apps'],
-                row['avg_apps_per_server']
-            ])
-        
-        # 2. Préparation des données pour la feuille de clusters
-        clusters_data = []
-        # En-têtes
-        clusters_data.append(['Groupe', 'Serveur', 'Cluster', 'Applications', 'Nombre d\'applications'])
-        
-        # Données des clusters
-        for cluster_id, servers in clusters.items():
-            cluster_name = f"Cluster_{cluster_id}"
-            for server in servers:
-                apps = graph.nodes[server]["apps"]
-                apps_str = ", ".join(apps)
-                clusters_data.append([
-                    cluster_name,
-                    server,
-                    cluster_name,
-                    apps_str,
-                    len(apps)
-                ])
-        
-        # 3. Création du fichier Excel avec openpyxl de manière simple
-        import openpyxl
-        
-        wb = openpyxl.Workbook()
-        
-        # Feuille Statistiques
-        ws_stats = wb.active
-        ws_stats.title = "Statistiques"
-        
-        # Ajouter les données statistiques
-        for row in stats_data:
-            ws_stats.append(row)
-        
-        # Feuille Clusters
-        ws_clusters = wb.create_sheet(title="Clusters")
-        
-        # Ajouter les données de clusters
-        for row in clusters_data:
-            ws_clusters.append(row)
-        
-        # Sauvegarder le fichier
-        wb.save(output_file)
-        
-        print(f"✅ Export Excel terminé: {output_file}")
-        return True
-        
-    except ImportError:
-        print("❌ La bibliothèque openpyxl n'est pas installée. Exportation en CSV à la place.")
-        # Exporter en CSV si openpyxl n'est pas disponible
-        stats_file = output_file.replace('.xlsx', '_statistics.csv')
-        clusters_file = output_file.replace('.xlsx', '_clusters.csv')
-        
-        # Sauvegarder en CSV
-        import csv
-        
-        with open(stats_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            for row in stats_data:
-                writer.writerow(row)
-        
-        with open(clusters_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            for row in clusters_data:
-                writer.writerow(row)
-        
-        print(f"✅ Export CSV terminé: {stats_file} et {clusters_file}")
-        return False
-        
-    except Exception as e:
-        print(f"❌ Erreur lors de l'export Excel: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # Tentative de sauvegarde en CSV
-        try:
-            stats_file = output_file.replace('.xlsx', '_statistics.csv')
-            clusters_file = output_file.replace('.xlsx', '_clusters.csv')
-            
-            # Utiliser le module csv standard pour plus de robustesse
-            import csv
-            
-            with open(stats_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                for row in stats_data:
-                    writer.writerow(row)
-            
-            with open(clusters_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                for row in clusters_data:
-                    writer.writerow(row)
-            
-            print(f"✅ Sauvegarde CSV terminée: {stats_file} et {clusters_file}")
-        except Exception as csv_error:
-            print(f"❌ Échec de la sauvegarde CSV: {csv_error}")
-        
-        return False
-
-def load_excel_data(file_path):
-    """
-    Charge les données d'un fichier Excel au format attendu pour l'analyse de clustering.
-    
-    Args:
-        file_path (str): Chemin vers le fichier Excel
-        
-    Returns:
-        list: Liste de dictionnaires au format {"server": str, "apps": list}
-    """
-    try:
-        # Charger le fichier Excel
-        df = pd.read_excel(file_path)
-        
-        # Vérifier les colonnes requises
-        required_columns = ["server", "applications"]
-        for col in required_columns:
-            if col not in df.columns:
-                raise ValueError(f"La colonne '{col}' est manquante dans le fichier Excel.")
-        
-        # Convertir le DataFrame en format attendu pour l'analyse
-        servers_data = []
-        
-        for _, row in df.iterrows():
-            server = str(row["server"]).strip()
-            
-            # Traiter les applications (séparées par des sauts de ligne)
-            apps_text = str(row["applications"])
-            if pd.isna(apps_text) or apps_text.strip() == "":
-                apps = []
-            else:
-                # Séparer par saut de ligne et nettoyer
-                apps = [app.strip() for app in apps_text.split("\n") if app.strip()]
-            
-            # N'ajouter que si le serveur a un nom et n'est pas déjà dans la liste
-            if server and not pd.isna(server):
-                servers_data.append({
-                    "server": server,
-                    "apps": apps
-                })
-        
-        return servers_data
-        
-    except Exception as e:
-        raise Exception(f"Erreur lors du chargement du fichier Excel: {e}")
-
-def load_json_data(file_path):
-    """
-    Charge les données d'un fichier JSON.
-    
-    Args:
-        file_path (str): Chemin vers le fichier JSON
-        
-    Returns:
-        list: Données du fichier JSON
-    """
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    
-    # Vérifier le format des données
-    if not isinstance(data, list):
-        raise ValueError("Le fichier JSON doit contenir une liste de serveurs")
-    
-    # Vérifier que chaque élément a la structure attendue
-    for item in data:
-        if not isinstance(item, dict) or "server" not in item or "apps" not in item:
-            raise ValueError("Format de données incorrect. Chaque élément doit contenir 'server' et 'apps'")
-    
-    return data
-
-def generate_example_excel():
-    """Génère un exemple de fichier Excel pour l'analyse de clustering."""
-    print_header()
-    print("GÉNÉRATION D'UN EXEMPLE DE FICHIER EXCEL\n")
-    
-    # Données d'exemple
-    example_data = [
-        {"server": "server1.example.com", "applications": "app1\napp2\napp3"},
-        {"server": "server2.example.com", "applications": "app1\napp4"},
-        {"server": "server3.example.com", "applications": "app2\napp3\napp5"},
-        {"server": "server4.example.com", "applications": "app4\napp5"},
-        {"server": "server5.example.com", "applications": "app1\napp2\napp3"},
-        {"server": "server6.example.com", "applications": "app6"},
-        {"server": "server7.example.com", "applications": "app7\napp8"},
-        {"server": "server8.example.com", "applications": "app7\napp8"},
-        {"server": "server9.example.com", "applications": "app9"},
-        {"server": "server10.example.com", "applications": "app1\napp10"}
-    ]
-    
-    # Créer un DataFrame pandas
-    df = pd.DataFrame(example_data)
-    
-    # Enregistrer le DataFrame dans un fichier Excel
-    input_dir = get_input_dir()
-    example_file = os.path.join(input_dir, "example_servers_data.xlsx")
-    
-    try:
-        df.to_excel(example_file, index=False)
-        print(f"✅ Exemple de fichier Excel généré: {example_file}")
-        print("Ce fichier contient 10 serveurs avec diverses applications.")
-        print("Vous pouvez maintenant l'utiliser pour l'analyse de clustering.")
-    except Exception as e:
-        print(f"❌ Erreur lors de la création du fichier Excel: {e}")
-    
-    input("\nAppuyez sur Entrée pour revenir au menu précédent...")
-
-def generate_example_json():
-    """Génère un exemple de fichier JSON pour l'analyse de clustering."""
-    print_header()
-    print("GÉNÉRATION D'UN EXEMPLE DE FICHIER JSON\n")
-    
-    example_data = [
-        {
-            "server": "server1.example.com",
-            "apps": ["app1", "app2", "app3"]
-        },
-        {
-            "server": "server2.example.com",
-            "apps": ["app1", "app4"]
-        },
-        {
-            "server": "server3.example.com",
-            "apps": ["app2", "app3", "app5"]
-        },
-        {
-            "server": "server4.example.com",
-            "apps": ["app4", "app5"]
-        },
-        {
-            "server": "server5.example.com",
-            "apps": ["app1", "app2", "app3"]
-        },
-        {
-            "server": "server6.example.com",
-            "apps": ["app6"]
-        },
-        {
-            "server": "server7.example.com",
-            "apps": ["app7", "app8"]
-        },
-        {
-            "server": "server8.example.com",
-            "apps": ["app7", "app8"]
-        },
-        {
-            "server": "server9.example.com",
-            "apps": ["app9"]
-        },
-        {
-            "server": "server10.example.com",
-            "apps": ["app1", "app10"]
-        }
-    ]
-    
-    input_dir = get_input_dir()
-    example_file = os.path.join(input_dir, "example_servers_data.json")
-    
-    with open(example_file, 'w') as f:
-        json.dump(example_data, f, indent=2)
-    
-    print(f"✅ Exemple de fichier JSON généré: {example_file}")
-    print("Ce fichier contient 10 serveurs avec diverses applications.")
-    print("Vous pouvez maintenant l'utiliser pour l'analyse de clustering.")
-    
-    input("\nAppuyez sur Entrée pour revenir au menu précédent...")
-
-def show_expected_format():
-    """Affiche le format attendu pour les fichiers d'entrée."""
-    print_header()
-    print("FORMAT DE FICHIER ATTENDU\n")
-    
-    print("Deux formats de fichiers sont acceptés:\n")
-    
-    print("1. Format Excel:")
-    print("   - Le fichier doit contenir deux colonnes: 'server' et 'applications'")
-    print("   - Chaque ligne représente un serveur")
-    print("   - La colonne 'server' contient l'identifiant unique du serveur")
-    print("   - La colonne 'applications' contient les applications hébergées sur ce serveur,")
-    print("     séparées par des sauts de ligne\n")
-    
-    print("   Exemple de contenu Excel:")
-    print("   ┌─────────────────────┬───────────────┐")
-    print("   │ server              │ applications  │")
-    print("   ├─────────────────────┼───────────────┤")
-    print("   │ server1.example.com │ app1          │")
-    print("   │                     │ app2          │")
-    print("   │                     │ app3          │")
-    print("   ├─────────────────────┼───────────────┤")
-    print("   │ server2.example.com │ app1          │")
-    print("   │                     │ app4          │")
-    print("   └─────────────────────┴───────────────┘\n")
-    
-    print("2. Format JSON:")
-    print("   - Le fichier doit contenir une liste d'objets JSON")
-    print("   - Chaque objet doit avoir les propriétés 'server' et 'apps'")
-    print("   - 'server' est une chaîne de caractères")
-    print("   - 'apps' est une liste de chaînes de caractères\n")
-    
-    print("   Exemple de format JSON:")
-    print("""   [
-     {
-       "server": "server1.example.com",
-       "apps": ["app1", "app2", "app3"]
-     },
-     {
-       "server": "server2.example.com",
-       "apps": ["app1", "app4"]
-     }
-   ]""")
-    
-    print("\nLe module de clustering analysera ces données pour identifier des groupes de serveurs")
-    print("qui partagent des applications similaires, en utilisant l'algorithme de Louvain.")
-    
-    input("\nAppuyez sur Entrée pour revenir au menu précédent...")
-
-def analyze_server_clustering(input_path, results_file, stats_file, visualization_file, is_data_loaded=False):
-    """
-    Analyse de clustering des serveurs.
-    
-    Args:
-        input_path (str ou list): Chemin du fichier JSON ou données déjà chargées
-        results_file (str): Chemin où sauvegarder les résultats JSON
-        stats_file (str): Chemin où sauvegarder les statistiques CSV
-        visualization_file (str): Chemin où sauvegarder la visualisation HTML
-        is_data_loaded (bool): Si True, input_path contient déjà les données chargées
-        
-    Returns:
-        tuple: (clusters, labels, server_graph, cluster_stats)
-    """
-    # Charger les données si nécessaire
-    print("Chargement des données...")
-    if is_data_loaded:
-        servers_data = input_path
-    else:
-        servers_data = load_json_data(input_path)
-    
-    # Vérifier le format des données
-    if not isinstance(servers_data, list):
-        raise ValueError("Les données doivent être une liste de serveurs")
-    
-    if not servers_data:
-        raise ValueError("Aucune donnée de serveur trouvée")
-    
-    # Vérifier la structure des données
-    for server_info in servers_data[:5]:
-        if not isinstance(server_info, dict) or "server" not in server_info or "apps" not in server_info:
-            raise ValueError("Format de données incorrect. Chaque élément doit contenir 'server' et 'apps'")
-    
-    # Créer le graphe des serveurs
-    print("Création du graphe de serveurs...")
-    server_graph = create_server_graph(servers_data)
-    
-    # Appliquer l'algorithme de Louvain
-    print("Application de l'algorithme de Louvain pour le clustering...")
-    clusters, partition = apply_louvain_clustering(server_graph)
-    
-    # Créer des labels pour Illumio
-    print("Création des labels pour les serveurs...")
-    labels, isolated_servers = create_labels(clusters, server_graph)
-    
-    # Analyser les clusters
-    print("Analyse des statistiques des clusters...")
-    cluster_stats = analyze_clusters(clusters, server_graph)
-    
-    # Sauvegarder les résultats
-    print("Sauvegarde des résultats...")
-    results = {
-        "clusters": {str(k): v for k, v in clusters.items()},
-        "labels": labels,
-        "isolated_servers": isolated_servers
-    }
-    
-    with open(results_file, "w") as f:
-        json.dump(results, f, indent=2)
-    
-    # Sauvegarder les statistiques
-    cluster_stats.to_csv(stats_file, index=False)
-    
-    # Créer la visualisation interactive D3.js
-    print("Génération de la visualisation interactive...")
-    create_d3_network_html(server_graph, partition, clusters, visualization_file)
-    
-    return clusters, labels, server_graph, cluster_stats
-
 def create_server_graph(servers_data):
     """
     Créer un graphe non-orienté où les nœuds sont les serveurs.
     Les arêtes sont pondérées par le nombre d'applications communes.
+    
+    Args:
+        servers_data (list): Liste de dictionnaires au format {"server": str, "apps": list}
+        
+    Returns:
+        nx.Graph: Graphe des serveurs
     """
     G = nx.Graph()
     
@@ -599,7 +94,15 @@ def create_server_graph(servers_data):
     return G
 
 def apply_louvain_clustering(graph):
-    """Appliquer l'algorithme de Louvain pour détecter les communautés."""
+    """
+    Applique l'algorithme de Louvain pour détecter les communautés.
+    
+    Args:
+        graph (nx.Graph): Graphe des serveurs
+        
+    Returns:
+        tuple: (clusters, partition)
+    """
     # Appliquer l'algorithme de Louvain
     partition = community_louvain.best_partition(graph)
     
@@ -610,8 +113,244 @@ def apply_louvain_clustering(graph):
     
     return clusters, partition
 
+def apply_spectral_clustering(graph, n_clusters=None):
+    """
+    Applique l'algorithme de clustering spectral au graphe.
+    Minimise les connexions entre clusters.
+    
+    Args:
+        graph (nx.Graph): Graphe des serveurs
+        n_clusters (int, optional): Nombre de clusters cible. Si None, 
+                                   l'algorithme tentera de déterminer le nombre optimal.
+    
+    Returns:
+        tuple: (clusters, partition)
+    """
+    try:
+        from sklearn.cluster import SpectralClustering
+        from collections import defaultdict
+        
+        # Si n_clusters n'est pas spécifié, essayer de le déterminer
+        if n_clusters is None:
+            # Estimer un bon nombre de clusters
+            # Une approche heuristique basée sur la taille du graphe
+            n_clusters = max(2, min(int(np.sqrt(len(graph.nodes)) / 2), 20))
+        
+        # Préparer la matrice d'adjacence
+        adjacency_matrix = nx.to_numpy_array(graph)
+        
+        # Appliquer le clustering spectral
+        spectral = SpectralClustering(n_clusters=n_clusters, 
+                                    affinity='precomputed',
+                                    assign_labels='discretize',
+                                    random_state=42)
+        
+        # Utiliser la matrice d'adjacence comme matrice d'affinité
+        labels = spectral.fit_predict(adjacency_matrix)
+        
+        # Créer le dictionnaire partition
+        partition = {}
+        nodes = list(graph.nodes())
+        for i, node in enumerate(nodes):
+            partition[node] = int(labels[i])
+        
+        # Organiser les résultats par cluster
+        clusters = defaultdict(list)
+        for server, cluster_id in partition.items():
+            clusters[cluster_id].append(server)
+        
+        return clusters, partition
+    
+    except ImportError:
+        print("⚠️ La bibliothèque sklearn n'est pas installée. Utilisation de l'algorithme de Louvain à la place.")
+        return apply_louvain_clustering(graph)
+
+def apply_hierarchical_clustering(graph, n_clusters=None):
+    """
+    Applique un clustering hiérarchique agglomératif au graphe.
+    
+    Args:
+        graph (nx.Graph): Graphe des serveurs
+        n_clusters (int, optional): Nombre de clusters souhaité. Si None,
+                                   un nombre approprié sera déterminé automatiquement.
+    
+    Returns:
+        tuple: (clusters, partition)
+    """
+    try:
+        from sklearn.cluster import AgglomerativeClustering
+        from collections import defaultdict
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.csgraph import minimum_spanning_tree
+        
+        # Convertir le graphe en matrice de distances
+        adj_matrix = nx.to_numpy_array(graph)
+        
+        # Transformer les poids (qui représentent la similarité) en distances
+        # Plus le poids est élevé, plus les nœuds sont similaires, donc plus la distance est faible
+        max_weight = np.max(adj_matrix) if np.max(adj_matrix) > 0 else 1
+        distance_matrix = np.zeros_like(adj_matrix)
+        
+        # Pour les arêtes existantes, calculer l'inverse du poids (plus le poids est grand, plus la distance est petite)
+        for i in range(adj_matrix.shape[0]):
+            for j in range(adj_matrix.shape[1]):
+                if adj_matrix[i, j] > 0:
+                    distance_matrix[i, j] = max_weight / adj_matrix[i, j]
+                else:
+                    distance_matrix[i, j] = max_weight * 10  # Grande distance pour les non-connexions
+        
+        # Si n_clusters n'est pas spécifié, estimer un bon nombre
+        if n_clusters is None:
+            # Utiliser l'arbre couvrant de poids minimum pour estimer le nombre de clusters
+            mst = minimum_spanning_tree(csr_matrix(distance_matrix)).toarray()
+            
+            # Analyser les poids des arêtes dans l'MST pour trouver des points de coupure naturels
+            edges = []
+            for i in range(mst.shape[0]):
+                for j in range(i+1, mst.shape[1]):
+                    if mst[i, j] > 0:
+                        edges.append(mst[i, j])
+            
+            if not edges:
+                # Si pas d'arêtes dans l'MST (graphe déconnecté), utiliser une heuristique simple
+                n_clusters = max(2, min(int(np.sqrt(len(graph.nodes)) / 2), 20))
+            else:
+                # Trier les poids des arêtes
+                edges.sort()
+                
+                # Trouver un "gap" significatif dans les poids des arêtes
+                gaps = [edges[i+1] - edges[i] for i in range(len(edges)-1)]
+                if gaps:
+                    # Choisir le nombre de clusters en fonction du plus grand gap
+                    cutoff_idx = np.argmax(gaps)
+                    n_clusters = len(graph.nodes) - cutoff_idx - 1
+                    n_clusters = max(2, min(n_clusters, int(np.sqrt(len(graph.nodes)) * 2)))
+                else:
+                    n_clusters = 2
+        
+        # Appliquer le clustering hiérarchique
+        clustering = AgglomerativeClustering(
+            n_clusters=n_clusters,
+            affinity='precomputed',
+            linkage='average'  # 'average', 'complete', ou 'single'
+        )
+        
+        labels = clustering.fit_predict(distance_matrix)
+        
+        # Créer le dictionnaire partition
+        partition = {}
+        nodes = list(graph.nodes())
+        for i, node in enumerate(nodes):
+            partition[node] = int(labels[i])
+        
+        # Organiser les résultats par cluster
+        clusters = defaultdict(list)
+        for server, cluster_id in partition.items():
+            clusters[cluster_id].append(server)
+        
+        return clusters, partition
+        
+    except ImportError:
+        print("⚠️ Les bibliothèques sklearn ou scipy ne sont pas installées. Utilisation de l'algorithme de Louvain à la place.")
+        return apply_louvain_clustering(graph)
+    except Exception as e:
+        print(f"⚠️ Erreur lors du clustering hiérarchique: {e}")
+        print("Utilisation de l'algorithme de Louvain à la place.")
+        return apply_louvain_clustering(graph)
+
+def apply_min_cut_clustering(graph, n_clusters=None):
+    """
+    Applique un algorithme de type min-cut pour le clustering.
+    Minimise explicitement le nombre de connexions entre clusters.
+    
+    Args:
+        graph (nx.Graph): Graphe des serveurs
+        n_clusters (int, optional): Nombre de clusters souhaité. Si None,
+                                  un nombre approprié sera déterminé.
+    
+    Returns:
+        tuple: (clusters, partition)
+    """
+    try:
+        from sklearn.cluster import SpectralClustering
+        from collections import defaultdict
+        
+        # Si n_clusters n'est pas spécifié, estimer un bon nombre
+        if n_clusters is None:
+            # Estimer en fonction de la taille et de la structure du graphe
+            avg_degree = np.mean([d for _, d in graph.degree()])
+            n_clusters = max(2, min(int(len(graph.nodes) / avg_degree), int(np.sqrt(len(graph.nodes)))))
+        
+        # Construire la matrice d'adjacence
+        adjacency_matrix = nx.to_numpy_array(graph)
+        
+        # Appliquer SpectralClustering avec configuration pour minimiser les connexions entre clusters
+        spectral = SpectralClustering(
+            n_clusters=n_clusters,
+            affinity='precomputed',
+            assign_labels='discretize',
+            random_state=42
+        )
+        
+        # Utiliser la matrice d'adjacence comme entrée
+        labels = spectral.fit_predict(adjacency_matrix)
+        
+        # Créer le dictionnaire partition
+        partition = {}
+        nodes = list(graph.nodes())
+        for i, node in enumerate(nodes):
+            partition[node] = int(labels[i])
+        
+        # Organiser les résultats par cluster
+        clusters = defaultdict(list)
+        for server, cluster_id in partition.items():
+            clusters[cluster_id].append(server)
+        
+        return clusters, partition
+        
+    except ImportError:
+        print("⚠️ La bibliothèque sklearn n'est pas installée. Utilisation de l'algorithme de Louvain à la place.")
+        return apply_louvain_clustering(graph)
+    except Exception as e:
+        print(f"⚠️ Erreur lors du min-cut clustering: {e}")
+        print("Utilisation de l'algorithme de Louvain à la place.")
+        return apply_louvain_clustering(graph)
+
+def choose_clustering_algorithm(graph, algorithm='louvain', n_clusters=None):
+    """
+    Choisit et applique l'algorithme de clustering spécifié.
+    
+    Args:
+        graph (nx.Graph): Graphe des serveurs
+        algorithm (str): Algorithme à utiliser ('louvain', 'spectral', 'hierarchical', 'min_cut')
+        n_clusters (int, optional): Nombre de clusters souhaité (pour les algorithmes qui le supportent)
+    
+    Returns:
+        tuple: (clusters, partition)
+    """
+    if algorithm == 'louvain':
+        return apply_louvain_clustering(graph)
+    elif algorithm == 'spectral':
+        return apply_spectral_clustering(graph, n_clusters)
+    elif algorithm == 'hierarchical':
+        return apply_hierarchical_clustering(graph, n_clusters)
+    elif algorithm == 'min_cut':
+        return apply_min_cut_clustering(graph, n_clusters)
+    else:
+        print(f"Algorithme {algorithm} non reconnu, utilisation de Louvain par défaut.")
+        return apply_louvain_clustering(graph)
+    
 def create_labels(clusters, graph):
-    """Créer des labels applicatifs pour Illumio basés sur les clusters."""
+    """
+    Créer des labels applicatifs pour Illumio basés sur les clusters.
+    
+    Args:
+        clusters (dict): Dictionnaire des clusters (id: liste de serveurs)
+        graph (nx.Graph): Graphe des serveurs avec attributs d'applications
+    
+    Returns:
+        tuple: (labels, isolated_servers)
+    """
     labels = {}
     isolated_servers = []
     
@@ -649,9 +388,19 @@ def create_labels(clusters, graph):
     return labels, isolated_servers
 
 def analyze_clusters(clusters, graph):
-    """Analyser les clusters pour obtenir des statistiques."""
+    """
+    Analyser les clusters pour obtenir des statistiques détaillées.
+    
+    Args:
+        clusters (dict): Dictionnaire des clusters (id: liste de serveurs)
+        graph (nx.Graph): Graphe des serveurs
+    
+    Returns:
+        pd.DataFrame: DataFrame des statistiques des clusters
+    """
     cluster_stats = []
     
+    # Analyser chaque cluster
     for cluster_id, servers in clusters.items():
         # Collecter toutes les applications dans ce cluster
         all_apps = set()
@@ -661,18 +410,55 @@ def analyze_clusters(clusters, graph):
         # Calculer la moyenne d'applications par serveur dans ce cluster
         avg_apps = sum(len(graph.nodes[server]["apps"]) for server in servers) / len(servers)
         
+        # Calculer le nombre de connexions à l'intérieur du cluster (densité interne)
+        internal_connections = 0
+        for i, server1 in enumerate(servers):
+            for server2 in servers[i+1:]:
+                if graph.has_edge(server1, server2):
+                    internal_connections += 1
+        
+        # Calculer le nombre de connexions vers l'extérieur du cluster
+        external_connections = 0
+        for server in servers:
+            for neighbor in graph.neighbors(server):
+                if neighbor not in servers:
+                    external_connections += 1
+        
+        # Calculer un score de qualité pour le cluster (internal vs external connections)
+        max_possible_internal = (len(servers) * (len(servers) - 1)) / 2
+        quality_score = internal_connections / max_possible_internal if max_possible_internal > 0 else 0
+        isolation_score = 1.0 if external_connections == 0 else internal_connections / (internal_connections + external_connections)
+        
         cluster_stats.append({
             "cluster_id": cluster_id,
             "num_servers": len(servers),
             "num_unique_apps": len(all_apps),
             "avg_apps_per_server": avg_apps,
+            "internal_connections": internal_connections,
+            "external_connections": external_connections,
+            "quality_score": quality_score,
+            "isolation_score": isolation_score
         })
+    
+    # Calculer des statistiques globales sur les connexions inter-clusters
+    total_edges = graph.number_of_edges()
+    inter_cluster_edges = sum(stats["external_connections"] for stats in cluster_stats) / 2  # Division par 2 car chaque connexion externe est comptée deux fois
+    
+    for stats in cluster_stats:
+        stats["cross_cluster_ratio"] = inter_cluster_edges / total_edges if total_edges > 0 else 0
     
     return pd.DataFrame(cluster_stats).sort_values("num_servers", ascending=False)
 
-def create_d3_network_html(graph, partition, clusters, output_file):
+def create_d3_network_html(graph, partition, clusters, output_file, algorithm='louvain'):
     """
     Crée une visualisation D3.js où les nœuds peuvent être déplacés avec la souris.
+    
+    Args:
+        graph (nx.Graph): Graphe des serveurs
+        partition (dict): Dictionnaire de partition (serveur: cluster_id)
+        clusters (dict): Dictionnaire des clusters (id: liste de serveurs)
+        output_file (str): Chemin du fichier HTML de sortie
+        algorithm (str): Nom de l'algorithme utilisé
     """
     # Préparer les données pour D3.js
     nodes = []
@@ -765,7 +551,7 @@ def create_d3_network_html(graph, partition, clusters, output_file):
     </head>
     <body>
         <div class="controls">
-            <h3>Clusters de serveurs avec l'algorithme de Louvain</h3>
+            <h3>Clusters de serveurs avec l'algorithme de {algorithm.capitalize()}</h3>
             <button id="reset">Réinitialiser la vue</button>
             <button id="toggle-labels">Afficher/Masquer les étiquettes</button>
             <button id="group-clusters">Regrouper par cluster</button>
@@ -1125,5 +911,514 @@ def create_d3_network_html(graph, partition, clusters, output_file):
     # Écrire le fichier HTML
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(html)
+
+def select_and_analyze_file():
+    """Sélectionne un fichier et lance l'analyse de clustering."""
+    print_header()
+    print("SÉLECTION DE FICHIER POUR ANALYSE DE CLUSTERING\n")
     
-    print(f"Visualisation interactive générée et sauvegardée dans {output_file}")
+    # Lister les fichiers disponibles
+    input_dir = get_input_dir()
+    excel_files = list_files('input', extension='.xlsx') + list_files('input', extension='.xls')
+    json_files = list_files('input', extension='.json')
+    
+    all_files = excel_files + json_files
+    if not all_files:
+        print(f"Aucun fichier Excel ou JSON trouvé dans le dossier {input_dir}")
+        print("Veuillez y placer un fichier Excel ou JSON contenant des données de serveurs.")
+        print("Vous pouvez aussi générer un exemple avec l'option 'Générer un exemple'.")
+        input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+        return
+    
+    # Afficher la liste des fichiers numérotés
+    print(f"\nFichiers disponibles:")
+    for i, file in enumerate(all_files, 1):
+        file_type = "Excel" if file.endswith(('.xlsx', '.xls')) else "JSON"
+        print(f"{i}. {file} [{file_type}]")
+    
+    print("\n0. Revenir au menu précédent")
+    
+    # Demander à l'utilisateur de choisir un fichier par son numéro
+    choice = input("\nVotre choix (numéro du fichier): ")
+    
+    if choice == '0' or not choice:
+        return
+    
+    try:
+        file_index = int(choice) - 1
+        if file_index < 0 or file_index >= len(all_files):
+            print("Choix invalide.")
+            input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+            return
+        
+        file_name = all_files[file_index]
+        file_path = os.path.join(input_dir, file_name)
+        
+        # Options d'analyse de clustering
+        print("\nOPTIONS D'ANALYSE DE CLUSTERING")
+        print("-" * 50)
+        
+        # Choix de l'algorithme
+        print("\nChoisissez l'algorithme de clustering:")
+        algorithms = [
+            ("louvain", "Louvain (détection de communautés basée sur la modularité)"),
+            ("spectral", "Clustering Spectral (clusters de taille équilibrée)"),
+            ("hierarchical", "Clustering Hiérarchique (basé sur les similitudes)"),
+            ("min_cut", "Min-Cut (minimisation des connexions entre clusters)")
+        ]
+        
+        for i, (algo_id, algo_desc) in enumerate(algorithms, 1):
+            print(f"{i}. {algo_desc}")
+        
+        algo_choice = get_user_choice(len(algorithms))
+        if algo_choice == 0:
+            return
+        
+        algorithm = algorithms[algo_choice - 1][0]
+        
+        # Option de nombre de clusters
+        n_clusters = None
+        if algorithm in ['spectral', 'hierarchical', 'min_cut']:
+            print("\nSouhaitez-vous spécifier un nombre de clusters?")
+            print("1. Oui, spécifier le nombre")
+            print("2. Non, laisser l'algorithme déterminer automatiquement")
+            
+            cluster_option = get_user_choice(2)
+            if cluster_option == 0:
+                return
+            
+            if cluster_option == 1:
+                try:
+                    n_clusters = int(input("\nNombre de clusters souhaité: "))
+                    if n_clusters < 2:
+                        print("Le nombre de clusters doit être d'au moins 2. Utilisation de 2 clusters.")
+                        n_clusters = 2
+                except ValueError:
+                    print("Valeur invalide. L'algorithme déterminera automatiquement le nombre de clusters.")
+                    n_clusters = None
+        
+        # Charger les données et effectuer l'analyse
+        is_excel = file_name.endswith(('.xlsx', '.xls'))
+        
+        if is_excel:
+            try:
+                import pandas as pd
+                
+                # Charger le fichier Excel
+                df = pd.read_excel(file_path)
+                
+                # Vérifier les colonnes nécessaires
+                if "server" not in df.columns or "applications" not in df.columns:
+                    print("❌ Format de fichier Excel invalide!")
+                    print("Le fichier doit contenir les colonnes 'server' et 'applications'.")
+                    input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+                    return
+                
+                # Préparer les données pour l'analyse
+                servers_data = []
+                for _, row in df.iterrows():
+                    server = str(row["server"]).strip()
+                    
+                    # Gérer différents formats possibles pour les applications
+                    apps_str = str(row["applications"])
+                    if "\n" in apps_str:
+                        apps = [app.strip() for app in apps_str.split("\n") if app.strip()]
+                    elif "," in apps_str:
+                        apps = [app.strip() for app in apps_str.split(",") if app.strip()]
+                    else:
+                        apps = [apps_str.strip()] if apps_str.strip() else []
+                    
+                    if server and apps:
+                        servers_data.append({"server": server, "apps": apps})
+                
+                if not servers_data:
+                    print("❌ Aucune donnée valide trouvée dans le fichier Excel.")
+                    input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+                    return
+                
+                print(f"\n✅ Données Excel chargées avec succès: {len(servers_data)} serveurs.")
+                
+            except Exception as e:
+                print(f"❌ Erreur lors de la lecture du fichier Excel: {e}")
+                traceback.print_exc()
+                input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+                return
+        else:
+            # Fichier JSON
+            try:
+                with open(file_path, 'r') as f:
+                    servers_data = json.load(f)
+                
+                # Vérifier le format
+                if not isinstance(servers_data, list) or not servers_data or \
+                   not all(isinstance(s, dict) and "server" in s and "apps" in s for s in servers_data):
+                    print("❌ Format de fichier JSON invalide!")
+                    print("Le fichier doit contenir une liste d'objets avec les champs 'server' et 'apps'.")
+                    input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+                    return
+                
+                print(f"\n✅ Données JSON chargées avec succès: {len(servers_data)} serveurs.")
+                
+            except Exception as e:
+                print(f"❌ Erreur lors de la lecture du fichier JSON: {e}")
+                traceback.print_exc()
+                input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+                return
+        
+        # Créer un graphe à partir des données
+        print(f"\nCréation du graphe de serveurs...")
+        graph = create_server_graph(servers_data)
+        
+        print(f"- {len(graph.nodes())} nœuds (serveurs)")
+        print(f"- {len(graph.edges())} arêtes (connexions)")
+        
+        # Appliquer l'algorithme de clustering
+        print(f"\nApplication de l'algorithme de clustering {algorithm}...")
+        
+        if n_clusters is not None:
+            print(f"- Nombre de clusters cible: {n_clusters}")
+            clusters, partition = choose_clustering_algorithm(graph, algorithm, n_clusters)
+        else:
+            clusters, partition = choose_clustering_algorithm(graph, algorithm)
+        
+        # Créer des labels basés sur les clusters
+        print("\nCréation des labels applicatifs...")
+        labels, isolated_servers = create_labels(clusters, graph)
+        
+        # Analyser les clusters
+        print("\nAnalyse des clusters...")
+        stats_df = analyze_clusters(clusters, graph)
+        
+        # Générer un timestamp unique pour cette analyse
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_dir = get_output_dir()
+        
+        # Préfixe des fichiers de sortie
+        output_prefix = f"server_clusters_{timestamp}"
+        
+        # Exporter les résultats
+        print("\nExportation des résultats...")
+        
+        # 1. Exporter les résultats en JSON
+        results_file = os.path.join(output_dir, f"{output_prefix}_results.json")
+        results = {
+            "algorithm": algorithm,
+            "n_clusters": n_clusters,
+            "num_servers": len(graph.nodes()),
+            "num_connections": len(graph.edges()),
+            "clusters": {str(cid): servers for cid, servers in clusters.items()},
+            "labels": labels,
+            "isolated_servers": isolated_servers
+        }
+        
+        with open(results_file, 'w') as f:
+            json.dump(results, f, indent=2)
+        
+        # 2. Exporter les statistiques en CSV
+        stats_file = os.path.join(output_dir, f"{output_prefix}_statistics.csv")
+        stats_df.to_csv(stats_file, index=False)
+        
+        # 3. Créer une visualisation interactive
+        visualization_file = os.path.join(output_dir, f"{output_prefix}_visualization.html")
+        create_d3_network_html(graph, partition, clusters, visualization_file, algorithm)
+        
+        # 4. Exporter en Excel avec statistiques et clusters
+        excel_file = os.path.join(output_dir, f"{output_prefix}_report.xlsx")
+        
+        try:
+            import pandas as pd
+            
+            # Créer un writer Excel
+            with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+                # Feuille des statistiques
+                stats_df.to_excel(writer, sheet_name='Statistiques', index=False)
+                
+                # Feuille des clusters
+                cluster_data = []
+                for cluster_id, servers in clusters.items():
+                    for server in servers:
+                        apps = graph.nodes[server]["apps"]
+                        cluster_data.append({
+                            "cluster_id": cluster_id,
+                            "server": server,
+                            "label": labels.get(server, ""),
+                            "applications": ", ".join(apps),
+                            "num_applications": len(apps)
+                        })
+                
+                cluster_df = pd.DataFrame(cluster_data)
+                cluster_df.to_excel(writer, sheet_name='Clusters', index=False)
+                
+                # Feuille de résumé
+                summary_data = {
+                    "Paramètre": [
+                        "Algorithme",
+                        "Nombre de clusters",
+                        "Nombre de serveurs",
+                        "Nombre de connexions",
+                        "Nombre de serveurs isolés"
+                    ],
+                    "Valeur": [
+                        algorithm,
+                        len(clusters),
+                        len(graph.nodes()),
+                        len(graph.edges()),
+                        len(isolated_servers)
+                    ]
+                }
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='Résumé', index=False)
+        
+        except Exception as e:
+            print(f"⚠️ Erreur lors de la création du rapport Excel: {e}")
+            print("Le rapport JSON et CSV a été généré correctement.")
+        
+        # Afficher un résumé des résultats
+        print("\n" + "="*50)
+        print("RÉSULTATS DE L'ANALYSE DE CLUSTERING")
+        print("="*50)
+        print(f"Algorithme: {algorithm}")
+        print(f"Nombre de clusters: {len(clusters)}")
+        print(f"Nombre de serveurs: {len(graph.nodes())}")
+        print(f"Nombre de connexions: {len(graph.edges())}")
+        print(f"Nombre de serveurs isolés: {len(isolated_servers)}")
+        
+        # Afficher les plus grands clusters
+        top_clusters = stats_df.nlargest(5, 'num_servers')
+        print("\nPrincipaux clusters:")
+        print(f"{'ID':<5} {'Serveurs':<10} {'Apps uniques':<15} {'Isol Score':<15}")
+        print("-" * 50)
+        
+        for _, row in top_clusters.iterrows():
+            cluster_id = row['cluster_id']
+            num_servers = row['num_servers']
+            num_apps = row['num_unique_apps']
+            isolation_score = row['isolation_score']
+            print(f"{cluster_id:<5} {num_servers:<10} {num_apps:<15} {isolation_score:<15.2f}")
+        
+        # Résumé des fichiers générés
+        print("\nFichiers générés:")
+        print(f"- Résultats: {results_file}")
+        print(f"- Statistiques: {stats_file}")
+        print(f"- Visualisation: {visualization_file}")
+        print(f"- Rapport Excel: {excel_file}")
+        
+        # Demander à l'utilisateur s'il souhaite ouvrir la visualisation
+        print("\nSouhaitez-vous ouvrir la visualisation interactive?")
+        print("1. Oui")
+        print("2. Non")
+        
+        viz_choice = get_user_choice(2)
+        if viz_choice == 1:
+            try:
+                import webbrowser
+                print(f"\nOuverture de {visualization_file}...")
+                webbrowser.open(f'file://{os.path.abspath(visualization_file)}')
+            except:
+                print(f"Impossible d'ouvrir automatiquement le navigateur.")
+                print(f"Veuillez ouvrir manuellement le fichier: {os.path.abspath(visualization_file)}")
+        
+        input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+    
+    except Exception as e:
+        print(f"❌ Erreur lors de l'analyse: {e}")
+        traceback.print_exc()
+        input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+
+
+def generate_example_excel():
+    """Génère un exemple de fichier Excel pour l'analyse de clustering."""
+    print_header()
+    print("GÉNÉRATION D'UN EXEMPLE DE FICHIER EXCEL\n")
+    
+    try:
+        import pandas as pd
+        
+        # Définir des données d'exemple
+        data = []
+        
+        # Groupe 1: Serveurs d'applications web
+        web_apps = ["WebApp1", "WebAPI", "Frontend", "Redis"]
+        for i in range(1, 6):
+            # Chaque serveur a 2-3 applications du groupe web
+            apps = np.random.choice(web_apps, size=np.random.randint(2, 4), replace=False)
+            data.append({
+                "server": f"web-server-{i}.example.com",
+                "applications": "\n".join(apps)
+            })
+        
+        # Groupe 2: Serveurs de base de données
+        db_apps = ["MySQL", "PostgreSQL", "MongoDB", "Redis", "ElasticSearch"]
+        for i in range(1, 5):
+            # Chaque serveur a 1-2 applications du groupe db
+            apps = np.random.choice(db_apps, size=np.random.randint(1, 3), replace=False)
+            data.append({
+                "server": f"db-server-{i}.example.com",
+                "applications": "\n".join(apps)
+            })
+            
+        # Groupe 3: Serveurs de traitement
+        proc_apps = ["DataProcessor", "BatchJob", "ReportGenerator", "APIServer"]
+        for i in range(1, 7):
+            # Chaque serveur a 2-3 applications du groupe proc
+            apps = np.random.choice(proc_apps, size=np.random.randint(2, 4), replace=False)
+            data.append({
+                "server": f"proc-server-{i}.example.com",
+                "applications": "\n".join(apps)
+            })
+        
+        # Groupe 4: Serveurs mixtes (cross-functional)
+        all_apps = web_apps + db_apps + proc_apps
+        for i in range(1, 4):
+            # Chaque serveur a 3-4 applications mixtes
+            apps = np.random.choice(all_apps, size=np.random.randint(3, 5), replace=False)
+            data.append({
+                "server": f"mixed-server-{i}.example.com",
+                "applications": "\n".join(apps)
+            })
+        
+        # Créer un DataFrame
+        df = pd.DataFrame(data)
+        
+        # Enregistrer dans un fichier Excel
+        input_dir = get_input_dir()
+        example_file = os.path.join(input_dir, "example_server_apps.xlsx")
+        
+        df.to_excel(example_file, index=False)
+        
+        print(f"✅ Exemple de fichier Excel créé: {example_file}")
+        print(f"Ce fichier contient {len(data)} serveurs répartis en 4 groupes fonctionnels")
+        print("avec différentes applications. Ce jeu de données est conçu pour démontrer")
+        print("comment les algorithmes de clustering peuvent identifier ces groupes.")
+        
+    except ImportError:
+        print("❌ La bibliothèque pandas n'est pas installée.")
+        print("Pour installer pandas: pip install pandas openpyxl")
+    except Exception as e:
+        print(f"❌ Erreur lors de la création du fichier exemple: {e}")
+    
+    input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+
+
+def show_expected_format():
+    """Affiche le format attendu pour les fichiers d'entrée."""
+    print_header()
+    print("FORMAT DE FICHIER ATTENDU\n")
+    
+    print("L'analyse de clustering accepte deux formats de fichiers:\n")
+    
+    print("1. Fichier Excel (.xlsx, .xls)")
+    print("   - Doit contenir deux colonnes: 'server' et 'applications'")
+    print("   - Chaque ligne représente un serveur unique")
+    print("   - La colonne 'applications' peut contenir plusieurs applications séparées par:")
+    print("     * Sauts de ligne (préféré)")
+    print("     * Virgules")
+    print("   Exemple:")
+    print("   +----------------------+------------------+")
+    print("   | server               | applications     |")
+    print("   +----------------------+------------------+")
+    print("   | server1.example.com  | app1             |")
+    print("   |                      | app2             |")
+    print("   |                      | app3             |")
+    print("   +----------------------+------------------+")
+    print("   | server2.example.com  | app1,app4        |")
+    print("   +----------------------+------------------+")
+    
+    print("\n2. Fichier JSON (.json)")
+    print("   - Doit contenir une liste d'objets avec les champs 'server' et 'apps'")
+    print("   - Le champ 'apps' doit être une liste de chaînes")
+    print("   Exemple:")
+    print("""   [
+     {
+       "server": "server1.example.com",
+       "apps": ["app1", "app2", "app3"]
+     },
+     {
+       "server": "server2.example.com",
+       "apps": ["app1", "app4"]
+     }
+   ]""")
+    
+    print("\nLe module de clustering utilise ces données pour:")
+    print("1. Créer un graphe où les serveurs sont des nœuds")
+    print("2. Établir des connexions entre serveurs partageant des applications")
+    print("3. Regrouper les serveurs en clusters selon l'algorithme choisi")
+    print("4. Générer des labels basés sur les applications communes dans chaque cluster")
+    
+    input("\nAppuyez sur Entrée pour revenir au menu précédent...")
+
+
+def load_excel_data(file_path):
+    """
+    Charge les données depuis un fichier Excel.
+    
+    Args:
+        file_path (str): Chemin du fichier Excel
+        
+    Returns:
+        list: Liste de dictionnaires au format {"server": str, "apps": list}
+    """
+    try:
+        import pandas as pd
+        
+        # Charger le fichier Excel
+        df = pd.read_excel(file_path)
+        
+        # Vérifier les colonnes nécessaires
+        if "server" not in df.columns or "applications" not in df.columns:
+            print("❌ Format de fichier Excel invalide!")
+            print("Le fichier doit contenir les colonnes 'server' et 'applications'.")
+            return []
+        
+        # Préparer les données pour l'analyse
+        servers_data = []
+        for _, row in df.iterrows():
+            server = str(row["server"]).strip()
+            
+            # Gérer différents formats possibles pour les applications
+            apps_str = str(row["applications"])
+            if "\n" in apps_str:
+                apps = [app.strip() for app in apps_str.split("\n") if app.strip()]
+            elif "," in apps_str:
+                apps = [app.strip() for app in apps_str.split(",") if app.strip()]
+            else:
+                apps = [apps_str.strip()] if apps_str.strip() else []
+            
+            if server and apps:
+                servers_data.append({"server": server, "apps": apps})
+        
+        return servers_data
+    
+    except Exception as e:
+        print(f"❌ Erreur lors de la lecture du fichier Excel: {e}")
+        traceback.print_exc()
+        return []
+
+
+def load_json_data(file_path):
+    """
+    Charge les données depuis un fichier JSON.
+    
+    Args:
+        file_path (str): Chemin du fichier JSON
+        
+    Returns:
+        list: Liste de dictionnaires au format {"server": str, "apps": list}
+    """
+    try:
+        with open(file_path, 'r') as f:
+            servers_data = json.load(f)
+        
+        # Vérifier le format
+        if not isinstance(servers_data, list) or not servers_data or \
+           not all(isinstance(s, dict) and "server" in s and "apps" in s for s in servers_data):
+            print("❌ Format de fichier JSON invalide!")
+            print("Le fichier doit contenir une liste d'objets avec les champs 'server' et 'apps'.")
+            return []
+        
+        return servers_data
+    
+    except Exception as e:
+        print(f"❌ Erreur lors de la lecture du fichier JSON: {e}")
+        traceback.print_exc()
+        return []
