@@ -23,6 +23,7 @@ from .cluster_analyzer import (
     # apply_infomap_clustering supprimé
     apply_hierarchical_clustering, 
     apply_min_cut_clustering,
+    apply_jaccard_based_clustering,
     analyze_clusters
 )
 
@@ -87,6 +88,43 @@ def compare_clustering_algorithms():
             except ValueError:
                 print("Valeur invalide. Chaque algorithme déterminera son nombre optimal de clusters.")
         
+        # Options spécifiques pour Jaccard
+        print("\nConfiguration des paramètres pour l'algorithme Jaccard:")
+        jaccard_params = {}
+        try:
+            print("\n1. Seuil initial de similarité (0-1):")
+            print("   Plus le seuil est élevé, plus les groupes seront homogènes.")
+            initial_threshold = float(input("   Seuil initial [0.9]: ") or "0.9")
+            jaccard_params['initial_threshold'] = max(0.0, min(1.0, initial_threshold))
+            
+            print("\n2. Pas de diminution du seuil à chaque itération:")
+            print("   Valeur plus petite = progression plus graduelle.")
+            threshold_step = float(input("   Pas de diminution [0.1]: ") or "0.1")
+            jaccard_params['threshold_step'] = max(0.01, min(0.5, threshold_step))
+            
+            print("\n3. Seuil minimal de similarité:")
+            print("   En dessous de ce seuil, les fusions s'arrêtent.")
+            min_threshold = float(input("   Seuil minimal [0.2]: ") or "0.2")
+            jaccard_params['min_threshold'] = max(0.0, min(0.9, min_threshold))
+            
+            print("\n4. Nombre minimal d'applications communes:")
+            print("   Nombre minimum d'applications que deux groupes doivent partager pour être fusionnés.")
+            min_common_apps = int(input("   Nombre minimal [1]: ") or "1")
+            jaccard_params['min_common_apps'] = max(1, min_common_apps)
+            
+        except ValueError:
+            print("Valeur invalide. Utilisation des valeurs par défaut.")
+            jaccard_params = {
+                'initial_threshold': 0.9,
+                'threshold_step': 0.1,
+                'min_threshold': 0.2,
+                'min_common_apps': 1
+            }
+        
+        print("\nParamètres configurés pour l'algorithme Jaccard:")
+        for key, value in jaccard_params.items():
+            print(f"  - {key}: {value}")
+        
         # Générer un timestamp unique pour cette analyse
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         output_dir = get_output_dir()
@@ -113,7 +151,8 @@ def compare_clustering_algorithms():
             ('spectral', "Clustering Spectral", apply_spectral_clustering),
             # ('infomap', "InfoMap", apply_infomap_clustering), supprimé
             ('hierarchical', "Clustering Hiérarchique", apply_hierarchical_clustering),
-            ('min_cut', "Min-Cut", apply_min_cut_clustering)
+            ('min_cut', "Min-Cut", apply_min_cut_clustering),
+            ('jaccard', "Jaccard en deux phases", apply_jaccard_based_clustering)
         ]
         
         # Exécuter chaque algorithme et collecter les résultats
@@ -128,6 +167,8 @@ def compare_clustering_algorithms():
             # Appliquer l'algorithme
             if algo_id in ['spectral', 'hierarchical', 'min_cut'] and fixed_clusters is not None:
                 clusters, partition = algo_func(graph, fixed_clusters)
+            elif algo_id == 'jaccard':
+                clusters, partition = algo_func(graph, **jaccard_params)
             else:
                 clusters, partition = algo_func(graph)
             
@@ -160,6 +201,23 @@ def compare_clustering_algorithms():
             cluster_sizes = [len(servers) for servers in clusters.values()]
             cluster_distributions[algo_id] = cluster_sizes
             
+            # Calculer un score d'efficacité qui récompense à la fois:
+            # - un grand nombre de clusters 
+            # - une faible proportion de connexions inter-clusters
+            # - une bonne granularité (clusters de taille équilibrée)
+            
+            num_nodes = len(graph.nodes())
+            
+            # Proportion de clusters par rapport au nombre de serveurs (0-1)
+            # Plus le nombre de clusters est proche du nombre de serveurs, meilleur est le score
+            cluster_ratio = num_clusters / num_nodes if num_nodes > 0 else 0
+            
+            # Score d'efficacité composite
+            # Formule: (ratio de clusters) * (1 - ratio de connexions inter-clusters) * (granularité)
+            # Cette formule récompense un grand nombre de clusters avec peu de connexions entre eux
+            # et des tailles de clusters équilibrées
+            efficiency_score = cluster_ratio * (1 - cross_cluster_ratio) * granularity
+            
             # Collecter les résultats pour comparaison
             results.append({
                 'Algorithme': algo_name,
@@ -172,7 +230,8 @@ def compare_clustering_algorithms():
                 'Ratio de connexions inter-clusters': cross_cluster_ratio,
                 'Temps d\'exécution (s)': duration,
                 'Score d\'isolation moyen': stats_df['isolation_score'].mean(),
-                'Score de qualité moyen': stats_df['quality_score'].mean()
+                'Score de qualité moyen': stats_df['quality_score'].mean(),
+                'Score d\'efficacité': efficiency_score  # Nouvelle métrique
             })
             
             print(f"  ✓ Terminé en {duration:.2f}s - {num_clusters} clusters créés")
@@ -196,8 +255,8 @@ def compare_clustering_algorithms():
             
             # Afficher un résumé des résultats
             print("\nRésumé de la comparaison:\n")
-            print(f"{'Algorithme':<25} {'Clusters':<10} {'Conn. inter':<12} {'Ratio inter':<12} {'Temps (s)':<10}")
-            print("-" * 70)
+            print(f"{'Algorithme':<25} {'Clusters':<10} {'Conn. inter':<12} {'Ratio inter':<12} {'Temps (s)':<10} {'Score Eff.':<12}")
+            print("-" * 85)
             
             # Trier les algorithmes par le ratio de connexions inter-clusters (croissant)
             sorted_results = sorted(results, key=lambda x: x['Ratio de connexions inter-clusters'])
@@ -208,13 +267,19 @@ def compare_clustering_algorithms():
                 cross_conn = result['Connexions inter-clusters']
                 cross_ratio = result['Ratio de connexions inter-clusters']
                 duration = result['Temps d\'exécution (s)']
+                efficiency = result.get('Score d\'efficacité', 0)
                 
-                print(f"{algo_name:<25} {num_clusters:<10} {cross_conn:<12.0f} {cross_ratio:<12.2%} {duration:<10.2f}")
+                print(f"{algo_name:<25} {num_clusters:<10} {cross_conn:<12.0f} {cross_ratio:<12.2%} {duration:<10.2f} {efficiency:<12.4f}")
             
-            print("\nRecommandation:")
+            print("\nRecommandations:")
             # Identifier le meilleur algorithme basé sur le ratio de connexions inter-clusters
-            best_algo = sorted_results[0]['Algorithme']
-            print(f"Pour minimiser les connexions entre clusters: {best_algo}")
+            best_isolation = sorted_results[0]['Algorithme']
+            print(f"Pour minimiser les connexions entre clusters: {best_isolation}")
+            
+            # Identifier le meilleur algorithme basé sur le score d'efficacité
+            sorted_by_efficiency = sorted(results, key=lambda x: -x.get('Score d\'efficacité', 0))
+            best_efficiency = sorted_by_efficiency[0]['Algorithme']
+            print(f"Pour maximiser le nombre de groupes cohérents: {best_efficiency}")
             
             # Si la granularité est importante, on peut aussi recommander selon ce critère
             sorted_by_granularity = sorted(results, key=lambda x: (-x['Granularité (min/max)']))
@@ -291,7 +356,25 @@ def create_comparison_graphs(comparison_df, cluster_distributions, excel_writer)
         img2.height = 400
         worksheet.add_image(img2, f'A{row_pos + 25}')
         
-        # 3. Ajouter une feuille pour les distributions de tailles de clusters
+        # 3. Nouveau graphique pour le score d'efficacité
+        plt.figure(figsize=(10, 6))
+        efficiency_values = [result.get('Score d\'efficacité', 0) for result in comparison_df.to_dict('records')]
+        plt.bar(comparison_df['Algorithme'], efficiency_values, color='lightcoral')
+        plt.title('Score d\'efficacité par algorithme')
+        plt.xlabel('Algorithme')
+        plt.ylabel('Score d\'efficacité')
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        
+        # Sauvegarder ce graphique
+        imgdata3 = BytesIO()
+        plt.savefig(imgdata3, format='png')
+        img3 = Image(imgdata3)
+        img3.width = 600
+        img3.height = 400
+        worksheet.add_image(img3, f'A{row_pos + 50}')
+        
+        # 4. Ajouter une feuille pour les distributions de tailles de clusters
         dist_df = pd.DataFrame({})
         
         # Créer une structure de données pour le boxplot
@@ -308,15 +391,15 @@ def create_comparison_graphs(comparison_df, cluster_distributions, excel_writer)
         # Sauvegarder le DataFrame pour le boxplot
         boxplot_df.to_excel(excel_writer, sheet_name='Distributions', index=False)
         
-        # 4. Créer un boxplot des distributions de tailles
+        # 5. Créer un boxplot des distributions de tailles
         plt.figure(figsize=(12, 8))
-        # Modifié pour ne plus inclure 'infomap'
-        boxplot = plt.boxplot([cluster_distributions[algo] for algo in ['louvain', 'spectral', 'hierarchical', 'min_cut']], 
-                              labels=['Louvain', 'Spectral', 'Hiérarchique', 'Min-Cut'],
+        # Inclure jaccard dans la liste des algorithmes
+        boxplot = plt.boxplot([cluster_distributions[algo] for algo in ['louvain', 'spectral', 'hierarchical', 'min_cut', 'jaccard']], 
+                              labels=['Louvain', 'Spectral', 'Hiérarchique', 'Min-Cut', 'Jaccard'],
                               patch_artist=True)
         
         # Couleurs pour les boxplots
-        colors = ['lightblue', 'lightgreen', 'lightyellow', 'lightcoral']  # Ajusté pour 4 algorithmes au lieu de 5
+        colors = ['lightblue', 'lightgreen', 'lightyellow', 'lightcoral', 'lightpink']  # Ajouté une couleur pour Jaccard
         for box, color in zip(boxplot['boxes'], colors):
             box.set(facecolor=color)
         
@@ -327,13 +410,13 @@ def create_comparison_graphs(comparison_df, cluster_distributions, excel_writer)
         plt.tight_layout()
         
         # Sauvegarder le boxplot
-        imgdata3 = BytesIO()
-        plt.savefig(imgdata3, format='png')
+        imgdata4 = BytesIO()
+        plt.savefig(imgdata4, format='png')
         worksheet2 = excel_writer.sheets['Distributions']
-        img3 = Image(imgdata3)
-        img3.width = 800
-        img3.height = 500
-        worksheet2.add_image(img3, 'D5')
+        img4 = Image(imgdata4)
+        img4.width = 800
+        img4.height = 500
+        worksheet2.add_image(img4, 'D5')
         
     except ImportError:
         # Si matplotlib n'est pas disponible, on sauvegarde juste les données

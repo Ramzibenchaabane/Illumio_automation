@@ -113,6 +113,151 @@ def apply_louvain_clustering(graph):
     
     return clusters, partition
 
+def apply_jaccard_based_clustering(graph, initial_threshold=0.9, threshold_step=0.1, min_threshold=0.2, min_common_apps=1):
+    """
+    Applique un algorithme de clustering en deux phases basé sur le coefficient de Jaccard.
+    Phase 1: Regroupe les serveurs ayant exactement les mêmes applications.
+    Phase 2: Fusionne progressivement les groupes similaires en diminuant le seuil de similarité.
+    
+    Args:
+        graph (nx.Graph): Graphe des serveurs
+        initial_threshold (float): Seuil initial de similarité de Jaccard (0-1)
+        threshold_step (float): Pas de diminution du seuil à chaque itération
+        min_threshold (float): Seuil minimal de similarité en dessous duquel on arrête les fusions
+        min_common_apps (int): Nombre minimal d'applications communes pour fusionner deux groupes
+        
+    Returns:
+        tuple: (clusters, partition)
+    """
+    from collections import defaultdict
+    import numpy as np
+    
+    # Phase 1: Regroupement par identité exacte
+    print("Phase 1: Regroupement des serveurs par ensemble d'applications identiques...")
+    
+    # Créer un dictionnaire pour regrouper les serveurs par leur signature d'applications
+    signature_to_servers = defaultdict(list)
+    
+    # Pour chaque serveur, créer une signature (tuple trié d'applications)
+    for server in graph.nodes():
+        apps = graph.nodes[server]["apps"]
+        # Créer une signature immuable (tuple) des applications triées
+        signature = tuple(sorted(apps))
+        signature_to_servers[signature].append(server)
+    
+    # Créer les clusters initiaux à partir des groupes par signature
+    initial_clusters = {}
+    for i, (signature, servers) in enumerate(signature_to_servers.items()):
+        initial_clusters[i] = servers
+    
+    print(f"  → {len(initial_clusters)} groupes initiaux formés")
+    
+    # Si aucun seuil de fusion n'est demandé, retourner directement les clusters par identité
+    if initial_threshold <= 0:
+        # Créer le dictionnaire de partition
+        partition = {}
+        for cluster_id, servers in initial_clusters.items():
+            for server in servers:
+                partition[server] = cluster_id
+        
+        return initial_clusters, partition
+    
+    # Phase 2: Fusion progressive par similarité
+    print("Phase 2: Fusion progressive des groupes par similarité...")
+    
+    # Fonction pour calculer le coefficient de Jaccard entre deux ensembles
+    def jaccard_similarity(set1, set2):
+        intersection = len(set1.intersection(set2))
+        union = len(set1.union(set2))
+        return intersection / union if union > 0 else 0
+    
+    # Fonction pour obtenir l'ensemble des applications d'un groupe
+    def get_apps_set(cluster_id):
+        app_set = set()
+        for server in current_clusters[cluster_id]:
+            app_set.update(graph.nodes[server]["apps"])
+        return app_set
+    
+    # Commencer avec les clusters initiaux
+    current_clusters = initial_clusters.copy()
+    current_threshold = initial_threshold
+    
+    # Continuer les fusions tant que le seuil est supérieur au minimum
+    while current_threshold >= min_threshold:
+        print(f"  → Fusion avec seuil de similarité: {current_threshold:.2f}")
+        
+        # Calculer les ensembles d'applications pour chaque cluster actuel
+        cluster_app_sets = {cid: get_apps_set(cid) for cid in current_clusters}
+        
+        # Préparer une liste de toutes les paires possibles de clusters
+        cluster_ids = list(current_clusters.keys())
+        pairs_to_merge = []
+        
+        # Évaluer chaque paire de clusters
+        for i in range(len(cluster_ids)):
+            for j in range(i+1, len(cluster_ids)):
+                cid1, cid2 = cluster_ids[i], cluster_ids[j]
+                
+                # Calculer la similarité de Jaccard
+                apps1 = cluster_app_sets[cid1]
+                apps2 = cluster_app_sets[cid2]
+                
+                # Calculer l'intersection des applications
+                common_apps = apps1.intersection(apps2)
+                
+                # Vérifier le nombre minimal d'applications communes
+                if len(common_apps) < min_common_apps:
+                    continue
+                
+                similarity = jaccard_similarity(apps1, apps2)
+                
+                # Si la similarité dépasse le seuil, ajouter à la liste des paires à fusionner
+                if similarity >= current_threshold:
+                    pairs_to_merge.append((cid1, cid2, similarity))
+        
+        # Si aucune fusion n'est possible avec ce seuil, réduire le seuil
+        if not pairs_to_merge:
+            current_threshold -= threshold_step
+            continue
+        
+        # Trier les paires par similarité décroissante pour fusionner d'abord les plus similaires
+        pairs_to_merge.sort(key=lambda x: x[2], reverse=True)
+        
+        # Effectuer les fusions
+        clusters_to_remove = set()
+        for cid1, cid2, _ in pairs_to_merge:
+            # Vérifier que les deux clusters existent toujours (n'ont pas été fusionnés)
+            if cid1 in clusters_to_remove or cid2 in clusters_to_remove:
+                continue
+            
+            # Fusionner cid2 dans cid1
+            current_clusters[cid1].extend(current_clusters[cid2])
+            clusters_to_remove.add(cid2)
+        
+        # Supprimer les clusters qui ont été fusionnés
+        for cid in clusters_to_remove:
+            del current_clusters[cid]
+        
+        print(f"  → {len(clusters_to_remove)} fusions effectuées. Clusters restants: {len(current_clusters)}")
+        
+        # Réduire le seuil pour la prochaine itération
+        current_threshold -= threshold_step
+    
+    # Réindexer les clusters pour avoir des IDs consécutifs
+    final_clusters = {}
+    for i, (_, servers) in enumerate(current_clusters.items()):
+        final_clusters[i] = servers
+    
+    # Créer le dictionnaire de partition
+    partition = {}
+    for cluster_id, servers in final_clusters.items():
+        for server in servers:
+            partition[server] = cluster_id
+    
+    print(f"Clustering terminé. {len(final_clusters)} clusters finaux formés.")
+    return final_clusters, partition
+
+
 def apply_spectral_clustering(graph, n_clusters=None):
     """
     Applique l'algorithme de clustering spectral au graphe.
@@ -316,14 +461,15 @@ def apply_min_cut_clustering(graph, n_clusters=None):
         print("Utilisation de l'algorithme de Louvain à la place.")
         return apply_louvain_clustering(graph)
 
-def choose_clustering_algorithm(graph, algorithm='louvain', n_clusters=None):
+def choose_clustering_algorithm(graph, algorithm='louvain', n_clusters=None, **kwargs):
     """
     Choisit et applique l'algorithme de clustering spécifié.
     
     Args:
         graph (nx.Graph): Graphe des serveurs
-        algorithm (str): Algorithme à utiliser ('louvain', 'spectral', 'hierarchical', 'min_cut')
+        algorithm (str): Algorithme à utiliser ('louvain', 'spectral', 'hierarchical', 'min_cut', 'jaccard')
         n_clusters (int, optional): Nombre de clusters souhaité (pour les algorithmes qui le supportent)
+        **kwargs: Arguments supplémentaires spécifiques à chaque algorithme
     
     Returns:
         tuple: (clusters, partition)
@@ -336,6 +482,20 @@ def choose_clustering_algorithm(graph, algorithm='louvain', n_clusters=None):
         return apply_hierarchical_clustering(graph, n_clusters)
     elif algorithm == 'min_cut':
         return apply_min_cut_clustering(graph, n_clusters)
+    elif algorithm == 'jaccard':
+        # Extraire les paramètres spécifiques à l'algorithme Jaccard
+        initial_threshold = kwargs.get('initial_threshold', 0.9)
+        threshold_step = kwargs.get('threshold_step', 0.1)
+        min_threshold = kwargs.get('min_threshold', 0.2)
+        min_common_apps = kwargs.get('min_common_apps', 1)
+        
+        return apply_jaccard_based_clustering(
+            graph, 
+            initial_threshold=initial_threshold,
+            threshold_step=threshold_step,
+            min_threshold=min_threshold,
+            min_common_apps=min_common_apps
+        )
     else:
         print(f"Algorithme {algorithm} non reconnu, utilisation de Louvain par défaut.")
         return apply_louvain_clustering(graph)
@@ -964,7 +1124,8 @@ def select_and_analyze_file():
             ("louvain", "Louvain (détection de communautés basée sur la modularité)"),
             ("spectral", "Clustering Spectral (clusters de taille équilibrée)"),
             ("hierarchical", "Clustering Hiérarchique (basé sur les similitudes)"),
-            ("min_cut", "Min-Cut (minimisation des connexions entre clusters)")
+            ("min_cut", "Min-Cut (minimisation des connexions entre clusters)"),
+            ("jaccard", "Jaccard en deux phases (maximisation du nombre de groupes cohérents)")
         ]
         
         for i, (algo_id, algo_desc) in enumerate(algorithms, 1):
@@ -976,6 +1137,45 @@ def select_and_analyze_file():
         
         algorithm = algorithms[algo_choice - 1][0]
         
+        # Paramètres spécifiques au clustering Jaccard
+        jaccard_params = {}
+        if algorithm == 'jaccard':
+            print("\nConfiguration des paramètres pour l'algorithme Jaccard:")
+            
+            try:
+                print("\n1. Seuil initial de similarité (0-1):")
+                print("   Plus le seuil est élevé, plus les groupes seront homogènes.")
+                initial_threshold = float(input("   Seuil initial [0.9]: ") or "0.9")
+                jaccard_params['initial_threshold'] = max(0.0, min(1.0, initial_threshold))
+                
+                print("\n2. Pas de diminution du seuil à chaque itération:")
+                print("   Valeur plus petite = progression plus graduelle.")
+                threshold_step = float(input("   Pas de diminution [0.1]: ") or "0.1")
+                jaccard_params['threshold_step'] = max(0.01, min(0.5, threshold_step))
+                
+                print("\n3. Seuil minimal de similarité:")
+                print("   En dessous de ce seuil, les fusions s'arrêtent.")
+                min_threshold = float(input("   Seuil minimal [0.2]: ") or "0.2")
+                jaccard_params['min_threshold'] = max(0.0, min(0.9, min_threshold))
+                
+                print("\n4. Nombre minimal d'applications communes:")
+                print("   Nombre minimum d'applications que deux groupes doivent partager pour être fusionnés.")
+                min_common_apps = int(input("   Nombre minimal [1]: ") or "1")
+                jaccard_params['min_common_apps'] = max(1, min_common_apps)
+                
+            except ValueError:
+                print("Valeur invalide. Utilisation des valeurs par défaut.")
+                jaccard_params = {
+                    'initial_threshold': 0.9,
+                    'threshold_step': 0.1,
+                    'min_threshold': 0.2,
+                    'min_common_apps': 1
+                }
+            
+            print("\nParamètres configurés pour l'algorithme Jaccard:")
+            for key, value in jaccard_params.items():
+                print(f"  - {key}: {value}")
+
         # Option de nombre de clusters
         n_clusters = None
         if algorithm in ['spectral', 'hierarchical', 'min_cut']:
@@ -1075,7 +1275,12 @@ def select_and_analyze_file():
         # Appliquer l'algorithme de clustering
         print(f"\nApplication de l'algorithme de clustering {algorithm}...")
         
-        if n_clusters is not None:
+        if algorithm == 'jaccard':
+            print(f"- Mode: Clustering basé sur le coefficient de Jaccard en deux phases")
+            for key, value in jaccard_params.items():
+                print(f"- {key}: {value}")
+            clusters, partition = choose_clustering_algorithm(graph, algorithm, **jaccard_params)
+        elif n_clusters is not None:
             print(f"- Nombre de clusters cible: {n_clusters}")
             clusters, partition = choose_clustering_algorithm(graph, algorithm, n_clusters)
         else:
@@ -1224,7 +1429,6 @@ def select_and_analyze_file():
         print(f"❌ Erreur lors de l'analyse: {e}")
         traceback.print_exc()
         input("\nAppuyez sur Entrée pour revenir au menu précédent...")
-
 
 def generate_example_excel():
     """Génère un exemple de fichier Excel pour l'analyse de clustering."""
